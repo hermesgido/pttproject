@@ -1,0 +1,128 @@
+package com.ropex.pptapp.ptt
+
+import android.content.Context
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.util.Log
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+
+class PTTManager(private val context: Context) {
+
+    private val audioManager: AudioManager by lazy {
+        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
+
+    private val toneGenerator: ToneGenerator by lazy {
+        ToneGenerator(AudioManager.STREAM_VOICE_CALL, 80)
+    }
+
+    // Use StateFlow instead of LiveData
+    private val _isTransmitting = MutableStateFlow(false)
+    val isTransmitting: StateFlow<Boolean> = _isTransmitting
+
+    private val _currentSpeaker = MutableStateFlow<String?>(null)
+    val currentSpeaker: StateFlow<String?> = _currentSpeaker
+
+    private val _channelUsers = MutableStateFlow<List<String>>(emptyList())
+    val channelUsers: StateFlow<List<String>> = _channelUsers
+
+    private var currentChannelId: String? = null
+    private var currentUserId: String? = null
+
+    // Audio output modes
+    enum class AudioOutput {
+        SPEAKER, EARPIECE, HEADSET
+    }
+
+    var audioOutput = AudioOutput.SPEAKER
+        set(value) {
+            field = value
+            updateAudioRouting()
+        }
+
+    fun onPTTPressed() {
+        Log.d("PTT", "PTT button pressed")
+
+        if (currentChannelId == null || currentUserId == null) {
+            Log.w("PTT", "Not in a channel")
+            playErrorTone()
+            return
+        }
+
+        // Notify signaling server to request speak
+        // This will be connected in MainActivity
+        _isTransmitting.value = true
+        playStartTone()
+    }
+
+    fun onPTTReleased() {
+        Log.d("PTT", "PTT button released")
+
+        if (!_isTransmitting.value) return
+
+        // Notify signaling server to stop speaking
+        _isTransmitting.value = false
+        playStopTone()
+    }
+
+    fun setCurrentSpeaker(userId: String?, userName: String?) {
+        _currentSpeaker.value = if (userId != null) {
+            "$userName ($userId)"
+        } else {
+            null
+        }
+    }
+
+    fun joinChannel(channelId: String, userId: String) {
+        currentChannelId = channelId
+        currentUserId = userId
+        Log.d("PTT", "Joined channel: $channelId as user: $userId")
+    }
+
+    fun leaveChannel() {
+        currentChannelId = null
+        currentUserId = null
+        _isTransmitting.value = false
+        _currentSpeaker.value = null
+        Log.d("PTT", "Left channel")
+    }
+
+    private fun updateAudioRouting() {
+        when (audioOutput) {
+            AudioOutput.SPEAKER -> {
+                audioManager.isSpeakerphoneOn = true
+                audioManager.mode = AudioManager.MODE_NORMAL
+            }
+            AudioOutput.EARPIECE -> {
+                audioManager.isSpeakerphoneOn = false
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            }
+            AudioOutput.HEADSET -> {
+                audioManager.isSpeakerphoneOn = false
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                // Headset routing is automatic
+            }
+        }
+    }
+
+    private fun playStartTone() {
+        toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 100)
+    }
+
+    private fun playStopTone() {
+        toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP2, 100)
+    }
+
+    private fun playBusyTone() {
+        toneGenerator.startTone(ToneGenerator.TONE_CDMA_NETWORK_BUSY, 500)
+    }
+
+    private fun playErrorTone() {
+        toneGenerator.startTone(ToneGenerator.TONE_CDMA_ABBR_INTERCEPT, 300)
+    }
+
+    fun release() {
+        toneGenerator.release()
+    }
+}
