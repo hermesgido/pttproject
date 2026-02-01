@@ -87,5 +87,15 @@ class AndroidMediasoupController(
         }
     }
 
+    fun setConsumersEnabled(enabled: Boolean) {
+        consumers.forEach {
+            val track = it.track
+            if (track is AudioTrack) {
+                track.setEnabled(enabled)
+            }
+        }
+    }
+
+
     fun isDeviceLoaded(): Boolean = deviceLoaded
 }

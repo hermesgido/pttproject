@@ -3,6 +3,8 @@ package com.ropex.pptapp.webrtc
 import android.content.Context
 import android.util.Log
 import org.webrtc.*
+import org.webrtc.audio.JavaAudioDeviceModule
+import org.webrtc.audio.AudioDeviceModule
 import java.util.concurrent.Executors
 import com.ropex.pptapp.Constants
 
@@ -16,6 +18,14 @@ class WebRTCManager(
     private lateinit var peerConnection: PeerConnection
     private lateinit var localAudioTrack: AudioTrack
     private var audioSource: AudioSource? = null
+    private var audioDeviceModule: AudioDeviceModule? = null
+    private var noiseGateEnabled: Boolean = Constants.WebRTC.USE_NOISE_GATE
+    private var noiseGateThresholdRms: Int = Constants.WebRTC.NOISE_GATE_RMS_THRESHOLD
+    private var noiseGateAttackMs: Int = Constants.WebRTC.NOISE_GATE_ATTACK_MS
+    private var noiseGateReleaseMs: Int = Constants.WebRTC.NOISE_GATE_RELEASE_MS
+    private var isTransmittingFlag: Boolean = false
+    private var gateOpen: Boolean = false
+    private var belowStartTime: Long = 0L
 
     private var isInitialized = false
     private var isConnected = false
@@ -39,8 +49,51 @@ class WebRTCManager(
                         .createInitializationOptions()
                 )
 
-                // Create factory with audio
+                audioDeviceModule = JavaAudioDeviceModule.builder(context)
+                    .setUseHardwareAcousticEchoCanceler(true)
+                    .setUseHardwareNoiseSuppressor(true)
+                    .setAudioSource(android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+                    .setSamplesReadyCallback(object : JavaAudioDeviceModule.SamplesReadyCallback {
+                        override fun onWebRtcAudioRecordSamplesReady(samples: JavaAudioDeviceModule.AudioSamples) {
+                            if (!noiseGateEnabled || !isTransmittingFlag) return
+                            val data = samples.data
+                            val len = data.size
+                            if (len == 0) return
+                            var sum = 0.0
+                            var i = 0
+                            while (i < len) {
+                                val s = data[i].toInt()
+                                sum += (s * s).toDouble()
+                                i++
+                            }
+                            val mean = sum / len
+                            val rms = kotlin.math.sqrt(mean)
+                            val now = System.currentTimeMillis()
+                            if (rms >= noiseGateThresholdRms) {
+                                belowStartTime = 0L
+                                if (!gateOpen && ::localAudioTrack.isInitialized) {
+                                    gateOpen = true
+                                    localAudioTrack.setEnabled(true)
+                                }
+                            } else {
+                                if (gateOpen) {
+                                    if (belowStartTime == 0L) {
+                                        belowStartTime = now
+                                    } else if (now - belowStartTime >= noiseGateReleaseMs) {
+                                        if (::localAudioTrack.isInitialized) {
+                                            localAudioTrack.setEnabled(false)
+                                        }
+                                        gateOpen = false
+                                        belowStartTime = 0L
+                                    }
+                                }
+                            }
+                        }
+                    })
+                    .createAudioDeviceModule()
+
                 peerConnectionFactory = PeerConnectionFactory.builder()
+                    .setAudioDeviceModule(audioDeviceModule)
                     .createPeerConnectionFactory()
 
                 isInitialized = true
@@ -154,12 +207,13 @@ class WebRTCManager(
     fun createLocalAudioTrack() {
         executor.execute {
             try {
-                // Use simplified constraints - some WebRTC versions don't support all options
                 val audioConstraints = MediaConstraints().apply {
-                    // Only add optional constraints
-                    optional.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-                    optional.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
-                    optional.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+                    if (Constants.WebRTC.USE_AGC) {
+                        mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                    }
+                    optional.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
                 }
 
                 audioSource = peerConnectionFactory.createAudioSource(audioConstraints)
@@ -171,9 +225,16 @@ class WebRTCManager(
                 Log.d("WebRTC", "Local audio track created")
             } catch (e: Exception) {
                 Log.e("WebRTC", "Create audio track failed", e)
-                // Fallback: create without constraints
                 try {
-                    audioSource = peerConnectionFactory.createAudioSource(MediaConstraints())
+                    val fallbackConstraints = MediaConstraints().apply {
+                        optional.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+                        optional.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+                        if (Constants.WebRTC.USE_AGC) {
+                            optional.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                        }
+                        optional.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+                    }
+                    audioSource = peerConnectionFactory.createAudioSource(fallbackConstraints)
                     localAudioTrack = peerConnectionFactory.createAudioTrack(
                         Constants.WebRTC.AUDIO_TRACK_ID,
                         audioSource!!
@@ -209,6 +270,18 @@ class WebRTCManager(
         }
     }
 
+    fun startTransmittingWithDelay(delayMs: Long) {
+        executor.execute {
+            try {
+                Thread.sleep(delayMs)
+            } catch (_: Exception) {}
+            if (::localAudioTrack.isInitialized) {
+                localAudioTrack.setEnabled(true)
+                Log.d("WebRTC", "Transmission started")
+            }
+        }
+    }
+
     fun stopTransmitting() {
         executor.execute {
             if (::localAudioTrack.isInitialized) {
@@ -222,6 +295,7 @@ class WebRTCManager(
         executor.execute {
             try {
                 audioSource?.dispose()
+                audioDeviceModule?.release()
                 if (::peerConnection.isInitialized) {
                     peerConnection.close()
                 }
@@ -239,6 +313,36 @@ class WebRTCManager(
     }
 
     fun isReady(): Boolean = isInitialized && isConnected
+
+    fun setNoiseGate(enabled: Boolean, thresholdRms: Int, attackMs: Int, releaseMs: Int) {
+        executor.execute {
+            noiseGateEnabled = enabled
+            noiseGateThresholdRms = thresholdRms
+            noiseGateAttackMs = attackMs
+            noiseGateReleaseMs = releaseMs
+        }
+    }
+
+    fun setTransmitState(isTransmitting: Boolean) {
+        executor.execute {
+            isTransmittingFlag = isTransmitting
+            if (!::localAudioTrack.isInitialized) return@execute
+            if (!noiseGateEnabled) {
+                localAudioTrack.setEnabled(isTransmitting)
+            } else {
+                if (!isTransmitting) {
+                    localAudioTrack.setEnabled(false)
+                    gateOpen = false
+                    belowStartTime = 0L
+                } else {
+                    // Enable immediately; gate may close after sustained low energy
+                    localAudioTrack.setEnabled(true)
+                    gateOpen = true
+                    belowStartTime = 0L
+                }
+            }
+        }
+    }
 
     fun getLocalAudioTrack(): AudioTrack? = if (::localAudioTrack.isInitialized) localAudioTrack else null
 }

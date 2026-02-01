@@ -4,6 +4,7 @@ import android.util.Log
 import io.socket.client.IO
 import io.socket.client.Socket
 import org.json.JSONObject
+import org.json.JSONArray
 import java.net.URISyntaxException
 
 class SignalingClient(
@@ -29,6 +30,7 @@ class SignalingClient(
         fun onRtpCapabilities(data: JSONObject)
         fun onNewProducer(data: JSONObject)
         fun onConsumerCreated(data: JSONObject)
+        fun onUsersList(users: JSONArray)
     }
 
     fun connect() {
@@ -99,6 +101,25 @@ class SignalingClient(
                 listener.onUserStopped(userId)
             }
 
+            on("user-joined") { args ->
+                val data = args[0] as JSONObject
+                val userId = data.getString("userId")
+                val userName = data.getString("userName")
+                listener.onUserJoined(userId, userName)
+            }
+
+            on("user-left") { args ->
+                val data = args[0] as JSONObject
+                val userId = data.getString("userId")
+                listener.onUserLeft(userId)
+            }
+
+            on("users") { args ->
+                val data = args[0] as JSONObject
+                val users = data.optJSONArray("users") ?: JSONArray()
+                listener.onUsersList(users)
+            }
+
             on("transport-created") { args ->
                 val data = args[0] as JSONObject
                 listener.onTransportCreated(data)
@@ -152,6 +173,13 @@ class SignalingClient(
             put("userId", userId)
         }
         socket?.emit("leave-room", data)
+    }
+
+    fun requestUsers(channelId: String) {
+        val data = JSONObject().apply {
+            put("roomId", channelId)
+        }
+        socket?.emit("get-users", data)
     }
 
     fun disconnect() {

@@ -47,12 +47,17 @@ object Constants {
         // Audio configuration
         const val AUDIO_TRACK_ID = "audio_track"
         const val AUDIO_STREAM_ID = "audio_stream"
+        const val USE_AGC = false
+        const val USE_NOISE_GATE = true
+        const val NOISE_GATE_RMS_THRESHOLD = 2000
+        const val NOISE_GATE_ATTACK_MS = 20
+        const val NOISE_GATE_RELEASE_MS = 250
 
         // Constraints
         val AUDIO_CONSTRAINTS = org.webrtc.MediaConstraints().apply {
             mandatory.add(org.webrtc.MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-            mandatory.add(org.webrtc.MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
             mandatory.add(org.webrtc.MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+            if (USE_AGC) mandatory.add(org.webrtc.MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
             optional.add(org.webrtc.MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
         }
     }
@@ -63,7 +68,5 @@ object Constants {
         const val DEFAULT_USER_NAME = "User"
     }
 }
-
-
 
 

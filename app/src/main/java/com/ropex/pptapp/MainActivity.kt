@@ -30,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import org.json.JSONArray
 import org.webrtc.IceCandidate
 import org.webrtc.PeerConnection
 import org.webrtc.SessionDescription
@@ -55,6 +56,8 @@ class MainActivity : ComponentActivity() {
     private var rtpParametersJson: JSONObject? = null
     private var pendingSendTransportInfo: JSONObject? = null
     private var pendingRecvTransportInfo: JSONObject? = null
+    private val connectedUsers = mutableSetOf<String>()
+    private var connectedUsersCount by mutableStateOf(0)
 
     // Managers
     private lateinit var audioManager: AudioManager
@@ -122,6 +125,8 @@ class MainActivity : ComponentActivity() {
                     currentSpeaker = currentSpeaker,
                     hasPermission = hasPermission,
                     isConnectedToServer = isConnectedToServer,
+                    userId = userId,
+                    connectedCount = connectedUsersCount,
                     onPTTPressed = {
                         if (hasPermission && isConnectedToServer) {
                             uiScope.launch {
@@ -218,11 +223,11 @@ class MainActivity : ComponentActivity() {
         try {
             // Configure audio for voice communication
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-            audioManager.isSpeakerphoneOn = true // Use speaker by default
+            audioManager.setSpeakerphoneOn(true)
 
             // Set reasonable volume
             val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
-            audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVolume / 2, 0)
+            audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVolume / 3, 0)
 
             Log.d("PTT", "Audio setup complete: mode=MODE_IN_COMMUNICATION, speakerphone=ON")
 
@@ -232,12 +237,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startTransmitting() {
-        // Start WebRTC transmission
-        webRTCManager.startTransmitting()
-
-        // Change audio mode
         try {
-            audioManager.mode = AudioManager.MODE_IN_CALL
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager.setSpeakerphoneOn(false)
+        } catch (_: Exception) {}
+        androidMediasoupController.setConsumersEnabled(false)
+        signalingClient.pauseConsumer()
+        webRTCManager.setNoiseGate(
+            Constants.WebRTC.USE_NOISE_GATE,
+            Constants.WebRTC.NOISE_GATE_RMS_THRESHOLD,
+            Constants.WebRTC.NOISE_GATE_ATTACK_MS,
+            Constants.WebRTC.NOISE_GATE_RELEASE_MS
+        )
+        webRTCManager.setTransmitState(true)
+        try {
             Log.d("PTT", "Started transmitting")
         } catch (e: Exception) {
             Log.e("PTT", "Start transmitting failed", e)
@@ -245,16 +258,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopTransmitting() {
-        // Stop WebRTC transmission
-        webRTCManager.stopTransmitting()
+        webRTCManager.setTransmitState(false)
 
         // Change audio mode back
         try {
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager.setSpeakerphoneOn(true)
             Log.d("PTT", "Stopped transmitting")
         } catch (e: Exception) {
             Log.e("PTT", "Stop transmitting failed", e)
         }
+        androidMediasoupController.setConsumersEnabled(true)
+        signalingClient.resumeConsumer()
     }
 
     private fun showToast(message: String) {
@@ -292,6 +307,12 @@ class MainActivity : ComponentActivity() {
             signalingClient.createTransport("send")
             signalingClient.createTransport("recv")
             mediasoupController.prepareProducer(Constants.WebRTC.AUDIO_TRACK_ID)
+            uiScope.launch {
+                connectedUsers.clear()
+                connectedUsers.add(userId)
+                connectedUsersCount = connectedUsers.size
+            }
+            signalingClient.requestUsers(channelId)
         }
 
         override fun onJoinError(error: String) {
@@ -328,10 +349,32 @@ class MainActivity : ComponentActivity() {
 
         override fun onUserJoined(userId: String, userName: String) {
             Log.d("Signaling", "User joined: $userName ($userId)")
+            uiScope.launch {
+                connectedUsers.add(userId)
+                connectedUsersCount = connectedUsers.size
+            }
         }
 
         override fun onUserLeft(userId: String) {
             Log.d("Signaling", "User left: $userId")
+            uiScope.launch {
+                connectedUsers.remove(userId)
+                connectedUsersCount = connectedUsers.size
+            }
+        }
+
+        override fun onUsersList(users: JSONArray) {
+            uiScope.launch {
+                connectedUsers.clear()
+                var i = 0
+                while (i < users.length()) {
+                    val u = users.getJSONObject(i)
+                    val uid = u.optString("userId")
+                    if (uid.isNotEmpty()) connectedUsers.add(uid)
+                    i++
+                }
+                connectedUsersCount = connectedUsers.size
+            }
         }
 
         override fun onIceCandidate(candidate: JSONObject) {
@@ -402,7 +445,13 @@ class MainActivity : ComponentActivity() {
         override fun onConsumerCreated(data: JSONObject) {
             uiScope.launch {
                 androidMediasoupController.onConsumerCreated(data)
-                signalingClient.resumeConsumer()
+                if (!isTransmitting) {
+                    signalingClient.resumeConsumer()
+                    androidMediasoupController.setConsumersEnabled(true)
+                } else {
+                    signalingClient.pauseConsumer()
+                    androidMediasoupController.setConsumersEnabled(false)
+                }
             }
         }
     }
@@ -496,7 +545,7 @@ class MainActivity : ComponentActivity() {
         // Reset audio mode
         try {
             audioManager.mode = AudioManager.MODE_NORMAL
-            audioManager.isSpeakerphoneOn = false
+            audioManager.setSpeakerphoneOn(false)
         } catch (e: Exception) {
             Log.e("PTT", "Cleanup failed", e)
         }
@@ -515,6 +564,8 @@ fun MainScreen(
     onJoinChannel: () -> Unit,
     onLeaveChannel: () -> Unit,
     isConnectedToServer: Boolean,
+    userId: String,
+    connectedCount: Int,
     onRequestPermission: () -> Unit
 ) {
     val context = LocalContext.current
@@ -571,6 +622,16 @@ fun MainScreen(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                     )
                 }
+
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "ID: $userId",
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Text(
+                    text = "Users: $connectedCount",
+                    style = MaterialTheme.typography.labelSmall
+                )
             }
 
             // Status Panel

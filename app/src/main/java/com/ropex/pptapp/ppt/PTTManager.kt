@@ -91,15 +91,15 @@ class PTTManager(private val context: Context) {
     private fun updateAudioRouting() {
         when (audioOutput) {
             AudioOutput.SPEAKER -> {
-                audioManager.isSpeakerphoneOn = true
-                audioManager.mode = AudioManager.MODE_NORMAL
+                audioManager.setSpeakerphoneOn(true)
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             }
             AudioOutput.EARPIECE -> {
-                audioManager.isSpeakerphoneOn = false
+                audioManager.setSpeakerphoneOn(false)
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             }
             AudioOutput.HEADSET -> {
-                audioManager.isSpeakerphoneOn = false
+                audioManager.setSpeakerphoneOn(false)
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
                 // Headset routing is automatic
             }
