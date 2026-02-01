@@ -23,9 +23,13 @@ class WebRTCManager(
     private var noiseGateThresholdRms: Int = Constants.WebRTC.NOISE_GATE_RMS_THRESHOLD
     private var noiseGateAttackMs: Int = Constants.WebRTC.NOISE_GATE_ATTACK_MS
     private var noiseGateReleaseMs: Int = Constants.WebRTC.NOISE_GATE_RELEASE_MS
+    private var noiseGateMinOpenMs: Int = 150
     private var isTransmittingFlag: Boolean = false
     private var gateOpen: Boolean = false
     private var belowStartTime: Long = 0L
+    private var emaRms: Double = 0.0
+    private var emaAlpha: Double = 0.2
+    private var lastOpenTime: Long = 0L
 
     private var isInitialized = false
     private var isConnected = false
@@ -50,9 +54,9 @@ class WebRTCManager(
                 )
 
                 audioDeviceModule = JavaAudioDeviceModule.builder(context)
-                    .setUseHardwareAcousticEchoCanceler(true)
-                    .setUseHardwareNoiseSuppressor(true)
-                    .setAudioSource(android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+                    .setUseHardwareAcousticEchoCanceler(false)
+                    .setUseHardwareNoiseSuppressor(false)
+                    .setAudioSource(android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION)
                     .setSamplesReadyCallback(object : JavaAudioDeviceModule.SamplesReadyCallback {
                         override fun onWebRtcAudioRecordSamplesReady(samples: JavaAudioDeviceModule.AudioSamples) {
                             if (!noiseGateEnabled || !isTransmittingFlag) return
@@ -68,18 +72,20 @@ class WebRTCManager(
                             }
                             val mean = sum / len
                             val rms = kotlin.math.sqrt(mean)
+                            emaRms = (emaAlpha * rms) + ((1.0 - emaAlpha) * emaRms)
                             val now = System.currentTimeMillis()
-                            if (rms >= noiseGateThresholdRms) {
+                            if (emaRms >= noiseGateThresholdRms) {
                                 belowStartTime = 0L
                                 if (!gateOpen && ::localAudioTrack.isInitialized) {
                                     gateOpen = true
                                     localAudioTrack.setEnabled(true)
+                                    lastOpenTime = now
                                 }
                             } else {
                                 if (gateOpen) {
                                     if (belowStartTime == 0L) {
                                         belowStartTime = now
-                                    } else if (now - belowStartTime >= noiseGateReleaseMs) {
+                                    } else if (now - belowStartTime >= noiseGateReleaseMs && (now - lastOpenTime) >= noiseGateMinOpenMs) {
                                         if (::localAudioTrack.isInitialized) {
                                             localAudioTrack.setEnabled(false)
                                         }
@@ -221,7 +227,7 @@ class WebRTCManager(
                     Constants.WebRTC.AUDIO_TRACK_ID,
                     audioSource!!
                 )
-                localAudioTrack.setEnabled(false) // Start muted
+                localAudioTrack.setEnabled(true) // Start muted
                 Log.d("WebRTC", "Local audio track created")
             } catch (e: Exception) {
                 Log.e("WebRTC", "Create audio track failed", e)

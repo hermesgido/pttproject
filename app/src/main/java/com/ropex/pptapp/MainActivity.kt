@@ -58,6 +58,9 @@ class MainActivity : ComponentActivity() {
     private var pendingRecvTransportInfo: JSONObject? = null
     private val connectedUsers = mutableSetOf<String>()
     private var connectedUsersCount by mutableStateOf(0)
+    private var volumeDownPressStart: Long = 0L
+    private var wasTransmittingBeforePress: Boolean = false
+    private val longPressThresholdMs: Long = 350
 
     // Managers
     private lateinit var audioManager: AudioManager
@@ -500,14 +503,17 @@ class MainActivity : ComponentActivity() {
         Log.d("PTT", "Key down: $keyCode")
         return when (keyCode) {
             KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                // Use volume down as PTT button
+                volumeDownPressStart = System.currentTimeMillis()
+                wasTransmittingBeforePress = isTransmitting
                 if (hasPermission && isConnectedToServer) {
                     uiScope.launch {
-                        isTransmitting = true
-                        currentSpeaker = "You"
-                        startTransmitting()
-                        signalingClient.requestSpeak(roomId, userId)
-                        showToast("PTT Pressed (Volume Down)")
+                        if (!isTransmitting) {
+                            isTransmitting = true
+                            currentSpeaker = "You"
+                            startTransmitting()
+                            signalingClient.requestSpeak(roomId, userId)
+                            showToast("PTT Pressed (Volume Down)")
+                        }
                     }
                     true
                 } else {
@@ -523,14 +529,27 @@ class MainActivity : ComponentActivity() {
         Log.d("PTT", "Key up: $keyCode")
         return when (keyCode) {
             KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                uiScope.launch {
-                    isTransmitting = false
-                    currentSpeaker = null
-                    stopTransmitting()
-                    signalingClient.stopSpeaking(roomId, userId)
-                    showToast("PTT Released")
+                val duration = System.currentTimeMillis() - volumeDownPressStart
+                val isLongPress = duration >= longPressThresholdMs
+                if (hasPermission && isConnectedToServer) {
+                    uiScope.launch {
+                        val shouldStop = if (isLongPress) {
+                            !wasTransmittingBeforePress
+                        } else {
+                            wasTransmittingBeforePress
+                        }
+                        if (shouldStop && isTransmitting) {
+                            isTransmitting = false
+                            currentSpeaker = null
+                            stopTransmitting()
+                            signalingClient.stopSpeaking(roomId, userId)
+                            showToast("PTT Released")
+                        }
+                    }
+                    true
+                } else {
+                    false
                 }
-                true
             }
             else -> super.onKeyUp(keyCode, event)
         }
