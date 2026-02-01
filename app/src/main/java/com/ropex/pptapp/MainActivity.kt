@@ -518,6 +518,7 @@ fun MainScreen(
     onRequestPermission: () -> Unit
 ) {
     val context = LocalContext.current
+    val scrollState = rememberScrollState()
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -526,9 +527,9 @@ fun MainScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(scrollState)
                 .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Header with permission status
             Column(
