@@ -239,4 +239,6 @@ class WebRTCManager(
     }
 
     fun isReady(): Boolean = isInitialized && isConnected
+
+    fun getLocalAudioTrack(): AudioTrack? = if (::localAudioTrack.isInitialized) localAudioTrack else null
 }

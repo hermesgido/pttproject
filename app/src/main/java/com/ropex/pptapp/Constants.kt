@@ -4,7 +4,7 @@ package com.ropex.pptapp
 object Constants {
 
     // Server Configuration - CHANGE TO YOUR COMPUTER'S IP
-    const val SERVER_URL = "https://3b3e9f77e677.ngrok-free.app"  // Your computer's IP
+    const val SERVER_URL = "http://192.168.1.132:3010"
     // For testing on same device as server:
     // const val SERVER_URL = "http://10.0.2.2:3000"  // Android emulator to localhost
 
@@ -63,8 +63,6 @@ object Constants {
         const val DEFAULT_USER_NAME = "User"
     }
 }
-
-
 
 
 

@@ -108,7 +108,12 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
+
+    // externalNativeBuild disabled for immediate testing; using packaged jniLibs
 }
 
 dependencies {
@@ -123,7 +128,10 @@ dependencies {
 
     // PTT APP SPECIFIC DEPENDENCIES
     // 1. WebRTC
-    implementation("io.github.webrtc-sdk:android:125.6422.06.1")
+    // implementation("io.github.webrtc-sdk:android:125.6422.06.1")
+
+    // Mediasoup Android wrapper (packages libmediasoupclient + WebRTC integration)
+    implementation("io.github.haiyangwu:mediasoup-client:3.4.0")
 
     // 2. Socket.IO for server communication
     implementation("io.socket:socket.io-client:2.1.0") {

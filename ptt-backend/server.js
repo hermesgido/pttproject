@@ -13,7 +13,9 @@ const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
-  }
+  },
+  // Allow older Socket.IO Android client (engine.io v3) to connect
+  allowEIO3: true
 });
 
 // Store active rooms and users
@@ -27,8 +29,8 @@ let router;
 async function createMediasoupWorker() {
   worker = await mediasoup.createWorker({
     logLevel: 'warn',
-    rtcMinPort: 40000,
-    rtcMaxPort: 49999
+    rtcMinPort: parseInt(process.env.RTC_MIN_PORT || '40000', 10),
+    rtcMaxPort: parseInt(process.env.RTC_MAX_PORT || '49999', 10)
   });
 
   router = await worker.createRouter({
@@ -134,7 +136,10 @@ io.on('connection', (socket) => {
 
       // Create WebRTC transport for this peer
       const transport = await router.createWebRtcTransport({
-        listenIps: [{ ip: '0.0.0.0', announcedIp: '127.0.0.1' }], // Change to your server IP
+        listenIps: [{
+          ip: '0.0.0.0',
+          announcedIp: process.env.ANNOUNCED_IP || '127.0.0.1'
+        }],
         enableUdp: true,
         enableTcp: true,
         preferUdp: true,
@@ -158,6 +163,9 @@ io.on('connection', (socket) => {
         iceCandidates: transport.iceCandidates,
         dtlsParameters: transport.dtlsParameters
       });
+
+      // Also send router RTP capabilities (required by clients to decide codecs)
+      socket.emit('rtp-capabilities', router.rtpCapabilities);
 
       // Notify others in the room
       socket.to(roomId).emit('user-joined', {
@@ -239,9 +247,15 @@ io.on('connection', (socket) => {
   socket.on('connect-transport', async ({ transportId, dtlsParameters }) => {
     try {
       const peer = peers.get(socket.id);
-      if (!peer || !peer.transport) return;
+      if (!peer) return;
 
-      await peer.transport.connect({ dtlsParameters });
+      let transport = peer.transport;
+      if (transport && transport.id !== transportId && peer.transports && peer.transports.has(transportId)) {
+        transport = peer.transports.get(transportId);
+      }
+      if (!transport) return;
+
+      await transport.connect({ dtlsParameters });
       console.log(`🔗 Transport connected for ${socket.id}`);
     } catch (error) {
       console.error('Transport connect error:', error);
@@ -252,15 +266,35 @@ io.on('connection', (socket) => {
   socket.on('produce-audio', async ({ transportId, kind, rtpParameters }) => {
     try {
       const peer = peers.get(socket.id);
-      if (!peer || !peer.transport) return;
+      if (!peer) return;
 
-      const producer = await peer.transport.produce({
+      let transport = peer.transport;
+      if (transport && transport.id !== transportId && peer.transports && peer.transports.has(transportId)) {
+        transport = peer.transports.get(transportId);
+      }
+      if (!transport) return;
+
+      // Only allow production if this peer is the current speaker (PTT granted)
+      const room = rooms.get(peer.roomId);
+      if (room && room.currentSpeaker !== socket.id) {
+        socket.emit('speak-error', { error: 'Not the current speaker' });
+        return;
+      }
+
+      const producer = await transport.produce({
         kind,
         rtpParameters
       });
 
       peer.producer = producer;
       console.log(`🎙️ Audio producer created for ${peer.userName}`);
+
+      // Notify others in the room about the new producer
+      socket.to(peer.roomId).emit('new-producer', {
+        producerId: producer.id,
+        userId: peer.userId,
+        userName: peer.userName
+      });
 
       // When producer is closed (user leaves)
       producer.on('transportclose', () => {
@@ -273,14 +307,20 @@ io.on('connection', (socket) => {
   });
 
   // WebRTC: Consume audio (start receiving audio)
-  socket.on('consume-audio', async ({ producerId, rtpCapabilities }) => {
+  socket.on('consume-audio', async ({ producerId, rtpCapabilities, transportId }) => {
     try {
       const peer = peers.get(socket.id);
-      if (!peer || !peer.transport || !router.canConsume({ producerId, rtpCapabilities })) {
+      if (!peer || !router.canConsume({ producerId, rtpCapabilities })) {
         return;
       }
 
-      const consumer = await peer.transport.consume({
+      let transport = peer.transport;
+      if (transportId && peer.transports && peer.transports.has(transportId)) {
+        transport = peer.transports.get(transportId);
+      }
+      if (!transport) return;
+
+      const consumer = await transport.consume({
         producerId,
         rtpCapabilities,
         paused: true // Start paused, resume when someone speaks
@@ -300,6 +340,38 @@ io.on('connection', (socket) => {
 
     } catch (error) {
       console.error('Consume error:', error);
+    }
+  });
+
+  // Create additional WebRTC transport (send/recv)
+  socket.on('create-transport', async ({ direction }) => {
+    try {
+      const peer = peers.get(socket.id);
+      if (!peer) return;
+
+      const transport = await router.createWebRtcTransport({
+        listenIps: [{
+          ip: '0.0.0.0',
+          announcedIp: process.env.ANNOUNCED_IP || '127.0.0.1'
+        }],
+        enableUdp: true,
+        enableTcp: true,
+        preferUdp: true,
+        initialAvailableOutgoingBitrate: 1000000
+      });
+
+      if (!peer.transports) peer.transports = new Map();
+      peer.transports.set(transport.id, transport);
+
+      socket.emit('transport-created', {
+        direction,
+        id: transport.id,
+        iceParameters: transport.iceParameters,
+        iceCandidates: transport.iceCandidates,
+        dtlsParameters: transport.dtlsParameters
+      });
+    } catch (error) {
+      console.error('Create transport error:', error);
     }
   });
 

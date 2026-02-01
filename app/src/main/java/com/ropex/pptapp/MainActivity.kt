@@ -34,6 +34,8 @@ import org.webrtc.IceCandidate
 import org.webrtc.PeerConnection
 import org.webrtc.SessionDescription
 import com.ropex.pptapp.Constants
+import com.ropex.pptapp.mediasoup.MediasoupController
+import com.ropex.pptapp.mediasoup.AndroidMediasoupController
 
 class MainActivity : ComponentActivity() {
 
@@ -45,11 +47,21 @@ class MainActivity : ComponentActivity() {
     private var roomId by mutableStateOf("test-room")
     private var userId by mutableStateOf("user-${System.currentTimeMillis()}")
     private var userName by mutableStateOf("User ${(1..100).random()}")
+    private var rtpCapabilitiesJson: JSONObject? = null
+    private var sendTransportId: String? = null
+    private var recvTransportId: String? = null
+    private var currentProducerId: String? = null
+    private var dtlsParametersJson: JSONObject? = null
+    private var rtpParametersJson: JSONObject? = null
+    private var pendingSendTransportInfo: JSONObject? = null
+    private var pendingRecvTransportInfo: JSONObject? = null
 
     // Managers
     private lateinit var audioManager: AudioManager
     private lateinit var signalingClient: SignalingClient
     private lateinit var webRTCManager: WebRTCManager
+    private lateinit var mediasoupController: MediasoupController
+    private lateinit var androidMediasoupController: AndroidMediasoupController
 
     // Coroutine scope for UI updates
     private val uiScope = CoroutineScope(Dispatchers.Main)
@@ -87,6 +99,15 @@ class MainActivity : ComponentActivity() {
             context = this,
             signalingListener = webRTCListener
         )
+
+        mediasoupController = MediasoupController()
+        mediasoupController.setCallback { dtls, rtp ->
+            dtlsParametersJson = dtls
+            rtpParametersJson = rtp
+        }
+
+        androidMediasoupController = AndroidMediasoupController(signalingClient)
+        androidMediasoupController.initialize(this)
 
         Log.d("PTT", "MainActivity created")
 
@@ -268,6 +289,9 @@ class MainActivity : ComponentActivity() {
             Log.d("Signaling", "Joined channel $channelId as $userId")
             // Add local audio track after joining
             webRTCManager.addLocalAudioTrack()
+            signalingClient.createTransport("send")
+            signalingClient.createTransport("recv")
+            mediasoupController.prepareProducer(Constants.WebRTC.AUDIO_TRACK_ID)
         }
 
         override fun onJoinError(error: String) {
@@ -280,6 +304,9 @@ class MainActivity : ComponentActivity() {
                 isTransmitting = true
                 currentSpeaker = "You"
                 startTransmitting()
+                webRTCManager.getLocalAudioTrack()?.let { track ->
+                    androidMediasoupController.produceAudio(track)
+                }
             }
         }
 
@@ -313,8 +340,70 @@ class MainActivity : ComponentActivity() {
         }
 
         override fun onTransportCreated(transportInfo: JSONObject) {
-            // Handle WebRTC transport creation from server
-            // TODO: Implement when we add proper WebRTC signaling
+            val id = transportInfo.getString("id")
+            val direction = transportInfo.optString("direction", "")
+            if (direction == "send" && sendTransportId == null) {
+                sendTransportId = id
+            } else if (direction == "recv" && recvTransportId == null) {
+                recvTransportId = id
+            }
+
+            val iceParameters = transportInfo.optJSONObject("iceParameters")
+            val iceCandidates = transportInfo.optJSONArray("iceCandidates")
+            val dtlsParameters = transportInfo.optJSONObject("dtlsParameters")
+            if (iceParameters != null && dtlsParameters != null) {
+                val candidatesObj = JSONObject().apply { put("candidates", iceCandidates) }
+                mediasoupController.createTransport(direction, id, iceParameters, candidatesObj, dtlsParameters)
+                if (direction == "send") {
+                    if (androidMediasoupController.isDeviceLoaded()) {
+                        androidMediasoupController.createSendTransport(transportInfo)
+                    } else {
+                        pendingSendTransportInfo = transportInfo
+                    }
+                } else if (direction == "recv") {
+                    if (androidMediasoupController.isDeviceLoaded()) {
+                        androidMediasoupController.createRecvTransport(transportInfo)
+                    } else {
+                        pendingRecvTransportInfo = transportInfo
+                    }
+                } else {
+                    if (androidMediasoupController.isDeviceLoaded()) {
+                        androidMediasoupController.createSendTransport(transportInfo)
+                    } else {
+                        pendingSendTransportInfo = transportInfo
+                    }
+                }
+            }
+        }
+
+        override fun onRtpCapabilities(data: JSONObject) {
+            rtpCapabilitiesJson = data
+            mediasoupController.initDevice(data)
+            androidMediasoupController.loadDevice(data)
+            pendingSendTransportInfo?.let {
+                androidMediasoupController.createSendTransport(it)
+                pendingSendTransportInfo = null
+            }
+            pendingRecvTransportInfo?.let {
+                androidMediasoupController.createRecvTransport(it)
+                pendingRecvTransportInfo = null
+            }
+        }
+
+        override fun onNewProducer(data: JSONObject) {
+            currentProducerId = data.getString("producerId")
+            val caps = rtpCapabilitiesJson
+            val tId = recvTransportId
+            if (caps != null) {
+                signalingClient.consumeAudio(currentProducerId!!, caps, tId)
+            }
+        }
+
+        override fun onConsumerCreated(data: JSONObject) {
+            uiScope.launch {
+                androidMediasoupController.onConsumerCreated(data)
+                signalingClient.resumeConsumer()
+            }
         }
     }
 
@@ -465,6 +554,22 @@ fun MainScreen(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                     )
                 }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Surface(
+                    color = if (isConnectedToServer) Color.Green.copy(alpha = 0.2f)
+                    else Color.Red.copy(alpha = 0.2f),
+                    shape = MaterialTheme.shapes.small
+                ) {
+                    Text(
+                        text = if (isConnectedToServer) "✓ Connected"
+                        else "✗ Not Connected",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isConnectedToServer) Color.Green else Color.Red,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    )
+                }
             }
 
             // Status Panel
@@ -512,7 +617,8 @@ fun MainScreen(
             // PTT Button - More responsive
             PTTButton(
                 isPressed = isTransmitting,
-                enabled = hasPermission,
+                enabled = hasPermission && isConnectedToServer,
+                connected = isConnectedToServer,
                 onPress = onPTTPressed,
                 onRelease = onPTTReleased
             )
@@ -526,7 +632,7 @@ fun MainScreen(
             ) {
                 Button(
                     onClick = onJoinChannel,
-                    enabled = hasPermission
+                    enabled = hasPermission && isConnectedToServer
                 ) {
                     Text("Join Channel")
                 }
@@ -575,6 +681,12 @@ fun MainScreen(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
                     modifier = Modifier.padding(top = 8.dp)
                 )
+                Text(
+                    text = if (isConnectedToServer) "Network: Connected" else "Network: Not Connected",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
         }
     }
@@ -584,6 +696,7 @@ fun MainScreen(
 fun PTTButton(
     isPressed: Boolean,
     enabled: Boolean,
+    connected: Boolean,
     onPress: () -> Unit,
     onRelease: () -> Unit
 ) {
@@ -622,21 +735,12 @@ fun PTTButton(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = if (!enabled) "NEEDS PERMISSION"
+                    text = if (!enabled) if (!connected) "NOT CONNECTED" else "NEEDS PERMISSION"
                     else if (isPressed) "SPEAKING"
                     else "PUSH TO TALK",
                     style = MaterialTheme.typography.headlineSmall,
                     color = Color.White
                 )
-
-                if (!enabled) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Tap to grant",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.8f)
-                    )
-                }
             }
         }
     }

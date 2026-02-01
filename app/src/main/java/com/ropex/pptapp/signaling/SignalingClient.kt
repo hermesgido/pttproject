@@ -26,6 +26,9 @@ class SignalingClient(
         fun onUserLeft(userId: String)
         fun onIceCandidate(candidate: JSONObject)
         fun onTransportCreated(transportInfo: JSONObject)
+        fun onRtpCapabilities(data: JSONObject)
+        fun onNewProducer(data: JSONObject)
+        fun onConsumerCreated(data: JSONObject)
     }
 
     fun connect() {
@@ -35,6 +38,7 @@ class SignalingClient(
                 reconnectionAttempts = 5
                 reconnectionDelay = 1000
                 timeout = 20000
+                transports = arrayOf("websocket")
             }
 
             socket = IO.socket(serverUrl, options)
@@ -94,6 +98,26 @@ class SignalingClient(
                 val userId = data.getString("userId")
                 listener.onUserStopped(userId)
             }
+
+            on("transport-created") { args ->
+                val data = args[0] as JSONObject
+                listener.onTransportCreated(data)
+            }
+
+            on("rtp-capabilities") { args ->
+                val data = args[0] as JSONObject
+                listener.onRtpCapabilities(data)
+            }
+
+            on("new-producer") { args ->
+                val data = args[0] as JSONObject
+                listener.onNewProducer(data)
+            }
+
+            on("consumer-created") { args ->
+                val data = args[0] as JSONObject
+                listener.onConsumerCreated(data)
+            }
         }
     }
 
@@ -137,5 +161,46 @@ class SignalingClient(
 
     fun isConnected(): Boolean {
         return socket?.connected() == true
+    }
+
+    fun createTransport(direction: String) {
+        val data = JSONObject().apply {
+            put("direction", direction)
+        }
+        socket?.emit("create-transport", data)
+    }
+
+    fun connectTransport(transportId: String, dtlsParameters: JSONObject) {
+        val data = JSONObject().apply {
+            put("transportId", transportId)
+            put("dtlsParameters", dtlsParameters)
+        }
+        socket?.emit("connect-transport", data)
+    }
+
+    fun produceAudio(transportId: String, rtpParameters: JSONObject) {
+        val data = JSONObject().apply {
+            put("transportId", transportId)
+            put("kind", "audio")
+            put("rtpParameters", rtpParameters)
+        }
+        socket?.emit("produce-audio", data)
+    }
+
+    fun consumeAudio(producerId: String, rtpCapabilities: JSONObject, transportId: String?) {
+        val data = JSONObject().apply {
+            put("producerId", producerId)
+            put("rtpCapabilities", rtpCapabilities)
+            if (transportId != null) put("transportId", transportId)
+        }
+        socket?.emit("consume-audio", data)
+    }
+
+    fun resumeConsumer() {
+        socket?.emit("resume-consumer")
+    }
+
+    fun pauseConsumer() {
+        socket?.emit("pause-consumer")
     }
 }

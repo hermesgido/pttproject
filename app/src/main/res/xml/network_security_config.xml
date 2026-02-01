@@ -13,7 +13,8 @@
         <domain includeSubdomains="true">localhost</domain>
         <domain includeSubdomains="true">127.0.0.1</domain>
         <domain includeSubdomains="true">10.0.2.2</domain> <!-- Android Emulator -->
-        <domain includeSubdomains="true">192.168.1.100</domain> <!-- Your LAN IP -->
+        <domain includeSubdomains="true">192.168.1.132</domain>
+        <domain includeSubdomains="true">192.168.1.100</domain>
         <domain includeSubdomains="true">192.168.1.101</domain>
         <domain includeSubdomains="true">192.168.1.102</domain>
         <!-- Add more LAN IPs as needed -->
