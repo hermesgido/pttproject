@@ -45,7 +45,7 @@ object Constants {
         )
 
         // Audio configuration
-        const val AUDIO_TRACK_ID = "audio_track"
+        const val AUDIO_TRACK_ID = "PTT_AUDIO_01"
         const val AUDIO_STREAM_ID = "audio_stream"
         const val USE_AGC = true
         const val USE_NOISE_GATE = false

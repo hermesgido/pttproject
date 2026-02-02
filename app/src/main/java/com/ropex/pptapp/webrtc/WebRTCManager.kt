@@ -57,50 +57,17 @@ class WebRTCManager(
                     .setUseHardwareAcousticEchoCanceler(false)
                     .setUseHardwareNoiseSuppressor(false)
                     .setAudioSource(android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-                    .setSamplesReadyCallback(object : JavaAudioDeviceModule.SamplesReadyCallback {
-                        override fun onWebRtcAudioRecordSamplesReady(samples: JavaAudioDeviceModule.AudioSamples) {
-                            if (!noiseGateEnabled || !isTransmittingFlag) return
-                            val data = samples.data
-                            val len = data.size
-                            if (len == 0) return
-                            var sum = 0.0
-                            var i = 0
-                            while (i < len) {
-                                val s = data[i].toInt()
-                                sum += (s * s).toDouble()
-                                i++
-                            }
-                            val mean = sum / len
-                            val rms = kotlin.math.sqrt(mean)
-                            emaRms = (emaAlpha * rms) + ((1.0 - emaAlpha) * emaRms)
-                            val now = System.currentTimeMillis()
-                            if (emaRms >= noiseGateThresholdRms) {
-                                belowStartTime = 0L
-                                if (!gateOpen && ::localAudioTrack.isInitialized) {
-                                    gateOpen = true
-                                    localAudioTrack.setEnabled(true)
-                                    lastOpenTime = now
-                                }
-                            } else {
-                                if (gateOpen) {
-                                    if (belowStartTime == 0L) {
-                                        belowStartTime = now
-                                    } else if (now - belowStartTime >= noiseGateReleaseMs && (now - lastOpenTime) >= noiseGateMinOpenMs) {
-                                        if (::localAudioTrack.isInitialized) {
-                                            localAudioTrack.setEnabled(false)
-                                        }
-                                        gateOpen = false
-                                        belowStartTime = 0L
-                                    }
-                                }
-                            }
-                        }
-                    })
                     .createAudioDeviceModule()
 
-                peerConnectionFactory = PeerConnectionFactory.builder()
+                val factoryOptions = PeerConnectionFactory.Options()
+
+                peerConnectionFactory =  PeerConnectionFactory.builder()
+                    .setOptions(factoryOptions)
                     .setAudioDeviceModule(audioDeviceModule)
+                    .setVideoEncoderFactory(DefaultVideoEncoderFactory(null, false, false))
+                    .setVideoDecoderFactory(DefaultVideoDecoderFactory(null))
                     .createPeerConnectionFactory()
+
 
                 isInitialized = true
                 Log.d("WebRTC", "WebRTC initialized successfully")
@@ -215,16 +182,14 @@ class WebRTCManager(
             try {
                 val audioConstraints = MediaConstraints().apply {
                     mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
                     mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
-                    if (Constants.WebRTC.USE_AGC) {
-                        mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
-                    }
-                    optional.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
                 }
 
                 audioSource = peerConnectionFactory.createAudioSource(audioConstraints)
                 localAudioTrack = peerConnectionFactory.createAudioTrack(
-                    Constants.WebRTC.AUDIO_TRACK_ID,
+                    "PTT_AUDIO_01",
                     audioSource!!
                 )
                 localAudioTrack.setEnabled(true) // Start muted
@@ -233,19 +198,17 @@ class WebRTCManager(
                 Log.e("WebRTC", "Create audio track failed", e)
                 try {
                     val fallbackConstraints = MediaConstraints().apply {
-                        optional.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-                        optional.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
-                        if (Constants.WebRTC.USE_AGC) {
-                            optional.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
-                        }
-                        optional.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+                        mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+                        mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                        mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+                        mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
                     }
                     audioSource = peerConnectionFactory.createAudioSource(fallbackConstraints)
                     localAudioTrack = peerConnectionFactory.createAudioTrack(
-                        Constants.WebRTC.AUDIO_TRACK_ID,
+                        "PTT_AUDIO_01",
                         audioSource!!
                     )
-                    localAudioTrack.setEnabled(false)
+                    localAudioTrack.setEnabled(true)
                     Log.d("WebRTC", "Local audio track created (fallback)")
                 } catch (e2: Exception) {
                     signalingListener.onError("Create audio track failed: ${e2.message}")
