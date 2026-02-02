@@ -29,6 +29,7 @@ import com.ropex.pptapp.webrtc.WebRTCManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.json.JSONArray
 import org.webrtc.IceCandidate
@@ -37,6 +38,24 @@ import org.webrtc.SessionDescription
 import com.ropex.pptapp.Constants
 import com.ropex.pptapp.mediasoup.MediasoupController
 import com.ropex.pptapp.mediasoup.AndroidMediasoupController
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.Tab
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
+import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
 
@@ -45,9 +64,16 @@ class MainActivity : ComponentActivity() {
     private var currentSpeaker by mutableStateOf<String?>(null)
     private var hasPermission by mutableStateOf(false)
     private var isConnectedToServer by mutableStateOf(false)
-    private var roomId by mutableStateOf("test-room")
+    private var isAuthenticated by mutableStateOf(false)
+    private var roomId by mutableStateOf("")
     private var userId by mutableStateOf("user-${System.currentTimeMillis()}")
     private var userName by mutableStateOf("User ${(1..100).random()}")
+    private var authToken: String? = null
+    private var companyIdInput by mutableStateOf("")
+    private var accountNumberInput by mutableStateOf("")
+    private var passwordInput by mutableStateOf("")
+    private var isLoggingIn by mutableStateOf(false)
+    private var authErrorMessage by mutableStateOf<String?>(null)
     private var rtpCapabilitiesJson: JSONObject? = null
     private var sendTransportId: String? = null
     private var recvTransportId: String? = null
@@ -68,6 +94,17 @@ class MainActivity : ComponentActivity() {
     private lateinit var webRTCManager: WebRTCManager
     private lateinit var mediasoupController: MediasoupController
     private lateinit var androidMediasoupController: AndroidMediasoupController
+    private lateinit var httpClient: OkHttpClient
+    private var deviceId: String? = null
+    private var companyId: String? = null
+    private var selectedTabIndex by mutableStateOf(0)
+    private var showSettingsMenu by mutableStateOf(false)
+    private var contacts = mutableStateListOf<DeviceItem>()
+    private var channels = mutableStateListOf<ChannelItem>()
+    private var presenceMap = mutableStateMapOf<String, PresenceInfo>()
+    private var recents = mutableStateListOf<RecentItem>()
+    private var activeSessionName by mutableStateOf<String?>(null)
+    private var activeSessionType by mutableStateOf<String?>(null)
 
     // Coroutine scope for UI updates
     private val uiScope = CoroutineScope(Dispatchers.Main)
@@ -115,6 +152,17 @@ class MainActivity : ComponentActivity() {
         androidMediasoupController = AndroidMediasoupController(signalingClient)
         androidMediasoupController.initialize(this)
 
+        httpClient = OkHttpClient()
+
+        runCatching {
+            val prefs = getSharedPreferences("pptapp", MODE_PRIVATE)
+            authToken = prefs.getString("authToken", null)
+            val savedUserId = prefs.getString("userId", null)
+            val savedUserName = prefs.getString("userName", null)
+            if (!savedUserId.isNullOrEmpty()) userId = savedUserId
+            if (!savedUserName.isNullOrEmpty()) userName = savedUserName
+        }
+
         Log.d("PTT", "MainActivity created")
 
         // Check initial permission
@@ -123,62 +171,81 @@ class MainActivity : ComponentActivity() {
         // Set UI content
         setContent {
             PPTAPPTheme {
-                MainScreen(
-                    isTransmitting = isTransmitting,
-                    currentSpeaker = currentSpeaker,
-                    hasPermission = hasPermission,
-                    isConnectedToServer = isConnectedToServer,
-                    userId = userId,
-                    connectedCount = connectedUsersCount,
-                    onPTTPressed = {
-                        if (hasPermission && isConnectedToServer) {
+                if (!isAuthenticated) {
+                    LoginScreen(
+                        companyId = companyIdInput,
+                        accountNumber = accountNumberInput,
+                        password = passwordInput,
+                        isConnected = isConnectedToServer,
+                        isLoggingIn = isLoggingIn,
+                        errorMessage = authErrorMessage,
+                        onCompanyIdChange = { companyIdInput = it },
+                        onAccountNumberChange = { accountNumberInput = it },
+                        onPasswordChange = { passwordInput = it },
+                        onLogin = { attemptLogin(companyIdInput, accountNumberInput, passwordInput) }
+                    )
+                } else if (roomId.isEmpty()) {
+                    MainTabbedScreen(
+                        selectedTabIndex = selectedTabIndex,
+                        onSelectTab = { selectedTabIndex = it },
+                        accountDisplayName = userName,
+                        contacts = contacts,
+                        channels = channels,
+                        presenceMap = presenceMap,
+                        recents = recents,
+                        showSettingsMenu = showSettingsMenu,
+                        onToggleSettingsMenu = { showSettingsMenu = !showSettingsMenu },
+                        onLogout = { performLogout() },
+                        onToggleSpeaker = { toggleSpeaker() },
+                        onContactClick = { device ->
+                            uiScope.launch { startDirectContact(device.id, device.displayName) }
+                        },
+                        onChannelClick = { channel ->
+                            uiScope.launch { startChannelTalk(channel.id, channel.name) }
+                        },
+                        onRecentClick = { item ->
                             uiScope.launch {
-                                isTransmitting = true
-                                currentSpeaker = "You"
-                                startTransmitting()
-                                signalingClient.requestSpeak(roomId, userId)
-                                Log.d("PTT", "PTT Pressed - Transmitting")
+                                if (item.type == "contact") {
+                                    startDirectContact(item.refId, item.name)
+                                } else {
+                                    startChannelTalk(item.refId, item.name)
+                                }
                             }
-                        } else if (!hasPermission) {
-                            showToast("Need microphone permission!")
-                            requestAudioPermission()
-                        } else if (!isConnectedToServer) {
-                            showToast("Not connected to server!")
+                        },
+                        onDeleteRecent = { item -> removeRecent(item) }
+                    )
+                } else {
+                    TalkScreen(
+                        title = activeSessionName ?: "",
+                        isTransmitting = isTransmitting,
+                        currentSpeaker = currentSpeaker,
+                        hasPermission = hasPermission,
+                        isConnectedToServer = isConnectedToServer,
+                        onBack = { endSession() },
+                        onPTTPressed = {
+                            if (hasPermission && isConnectedToServer && roomId.isNotEmpty()) {
+                                uiScope.launch {
+                                    isTransmitting = true
+                                    currentSpeaker = "You"
+                                    startTransmitting()
+                                    signalingClient.requestSpeak(roomId, userId)
+                                }
+                            } else if (!hasPermission) {
+                                requestAudioPermission()
+                            }
+                        },
+                        onPTTReleased = {
+                            uiScope.launch {
+                                if (isTransmitting) {
+                                    isTransmitting = false
+                                    currentSpeaker = null
+                                    stopTransmitting()
+                                    signalingClient.stopSpeaking(roomId, userId)
+                                }
+                            }
                         }
-                    },
-                    onPTTReleased = {
-                        uiScope.launch {
-                            isTransmitting = false
-                            currentSpeaker = null
-                            stopTransmitting()
-                            signalingClient.stopSpeaking(roomId, userId)
-                            Log.d("PTT", "PTT Released - Listening")
-                        }
-                    },
-                    onJoinChannel = {
-                        if (hasPermission && isConnectedToServer) {
-                            signalingClient.joinChannel(roomId, userId, userName)
-                            showToast("Joining channel...")
-                            Log.d("PTT", "Joining channel")
-                        } else {
-                            showToast("Need permission and connection first!")
-                        }
-                    },
-                    onLeaveChannel = {
-                        uiScope.launch {
-                            isTransmitting = false
-                            currentSpeaker = null
-                            stopTransmitting()
-                            signalingClient.leaveChannel(roomId, userId)
-                            webRTCManager.cleanup()
-                            showToast("Left channel")
-                            Log.d("PTT", "Left channel")
-                        }
-                    },
-                    onRequestPermission = {
-                        requestAudioPermission()
-                    }
-                )
+                    )
+                }
             }
         }
 
@@ -208,6 +275,59 @@ class MainActivity : ComponentActivity() {
 
         // Connect to signaling server
         signalingClient.connect()
+    }
+
+    private fun attemptLogin(companyId: String, accountNumber: String, password: String) {
+        uiScope.launch {
+            try {
+                isLoggingIn = true
+                val url = Constants.SERVER_URL + "/v1/auth/login"
+                val json = JSONObject().apply {
+                    put("companyId", companyId)
+                    put("accountNumber", accountNumber)
+                    put("password", password)
+                }.toString()
+                val body = json.toRequestBody("application/json; charset=utf-8".toMediaType())
+                val request = Request.Builder().url(url).post(body).build()
+                val response = withContext(Dispatchers.IO) { httpClient.newCall(request).execute() }
+                val code = response.code
+                val bodyStr = response.body?.string() ?: ""
+                if (code != 200) {
+                    var errMsg = ""
+                    try { errMsg = JSONObject(bodyStr).optString("error", "") } catch (_: Exception) {}
+                    Log.e("Auth", "Login failed code=$code body=$bodyStr")
+                    authErrorMessage = if (errMsg.isNotEmpty()) errMsg else "HTTP $code"
+                    showToast(if (errMsg.isNotEmpty()) "Login failed: $errMsg" else "Login failed ($code)")
+                    return@launch
+                }
+                val resp = JSONObject(bodyStr)
+                val token = resp.optString("token")
+                val deviceObj = resp.optJSONObject("device")
+                if (token.isNotEmpty() && deviceObj != null) {
+                    authToken = token
+                    userName = deviceObj.optString("displayName", userName)
+                    userId = deviceObj.optString("id", userId)
+                    runCatching {
+                        val prefs = getSharedPreferences("pptapp", MODE_PRIVATE)
+                        prefs.edit()
+                            .putString("authToken", authToken)
+                            .putString("userId", userId)
+                            .putString("userName", userName)
+                            .apply()
+                    }
+                    authErrorMessage = null
+                    signalingClient.authConnect(token, userName)
+                } else {
+                    authErrorMessage = "Invalid login response"
+                    showToast("Invalid login response")
+                }
+            } catch (e: Exception) {
+                showToast("Login error")
+                Log.e("Auth", "Login error", e)
+            } finally {
+                isLoggingIn = false
+            }
+        }
     }
 
     private fun checkMicrophonePermission(): Boolean {
@@ -288,6 +408,24 @@ class MainActivity : ComponentActivity() {
                 isConnectedToServer = true
                 showToast("Connected to server!")
                 Log.d("Signaling", "Connected to server")
+                authToken?.let { signalingClient.authConnect(it, userName) }
+            }
+        }
+
+        override fun onAuthOk(deviceId: String, companyId: String) {
+            uiScope.launch {
+                this@MainActivity.deviceId = deviceId
+                this@MainActivity.companyId = companyId
+                isAuthenticated = true
+                showToast("Authenticated")
+                refreshData()
+            }
+        }
+
+        override fun onAuthError(error: String) {
+            uiScope.launch {
+                isAuthenticated = false
+                showToast("Auth error")
             }
         }
 
@@ -325,10 +463,12 @@ class MainActivity : ComponentActivity() {
         override fun onSpeakGranted() {
             // Server granted permission to speak
             uiScope.launch {
+                Log.d("PTT", "Speak granted, starting transmitting and producing audio")
                 isTransmitting = true
                 currentSpeaker = "You"
                 startTransmitting()
                 webRTCManager.getLocalAudioTrack()?.let { track ->
+                    Log.d("PTT", "Local audio track ready, calling mediasoup produce")
                     androidMediasoupController.produceAudio(track)
                 }
             }
@@ -388,6 +528,7 @@ class MainActivity : ComponentActivity() {
         override fun onTransportCreated(transportInfo: JSONObject) {
             val id = transportInfo.getString("id")
             val direction = transportInfo.optString("direction", "")
+            Log.d("Mediasoup", "Transport created dir=\"$direction\" id=$id")
             if (direction == "send" && sendTransportId == null) {
                 sendTransportId = id
             } else if (direction == "recv" && recvTransportId == null) {
@@ -424,8 +565,10 @@ class MainActivity : ComponentActivity() {
 
         override fun onRtpCapabilities(data: JSONObject) {
             rtpCapabilitiesJson = data
-            mediasoupController.initDevice(data)
-            androidMediasoupController.loadDevice(data)
+            if (!androidMediasoupController.isDeviceLoaded()) {
+                mediasoupController.initDevice(data)
+                androidMediasoupController.loadDevice(data)
+            }
             pendingSendTransportInfo?.let {
                 androidMediasoupController.createSendTransport(it)
                 pendingSendTransportInfo = null
@@ -438,7 +581,7 @@ class MainActivity : ComponentActivity() {
 
         override fun onNewProducer(data: JSONObject) {
             currentProducerId = data.getString("producerId")
-            val caps = rtpCapabilitiesJson
+            val caps = androidMediasoupController.getDeviceRtpCapabilities() ?: rtpCapabilitiesJson
             val tId = recvTransportId
             if (caps != null) {
                 signalingClient.consumeAudio(currentProducerId!!, caps, tId)
@@ -456,6 +599,296 @@ class MainActivity : ComponentActivity() {
                     androidMediasoupController.setConsumersEnabled(false)
                 }
             }
+        }
+
+        override fun onProducerOk(producerId: String) {
+            Log.d("PTT", "Producer confirmed by server id=$producerId")
+        }
+    }
+
+    private fun refreshData() {
+        val cid = companyId ?: return
+        uiScope.launch {
+            val rec = loadRecents()
+            recents.clear()
+            recents.addAll(rec)
+            val devs = fetchDevices(cid)
+            contacts.clear()
+            val selfId = deviceId
+            contacts.addAll(
+                if (selfId.isNullOrEmpty()) devs else devs.filter { it.id != selfId }
+            )
+            val pres = fetchPresence(cid)
+            presenceMap.clear()
+            presenceMap.putAll(pres)
+            val chs = fetchChannelsWithCounts(cid, pres)
+            channels.clear()
+            channels.addAll(chs)
+        }
+    }
+
+    private suspend fun fetchDevices(companyId: String): List<DeviceItem> {
+        return withContext(Dispatchers.IO) {
+            val url = Constants.SERVER_URL + "/v1/companies/" + companyId + "/devices"
+            val req = Request.Builder().url(url).get().build()
+            val resp = httpClient.newCall(req).execute()
+            val body = resp.body?.string() ?: "[]"
+            val arr = JSONArray(body)
+            val out = mutableListOf<DeviceItem>()
+            var i = 0
+            while (i < arr.length()) {
+                val o = arr.getJSONObject(i)
+                val id = o.optString("id")
+                val dn = o.optString("displayName")
+                val an = o.optString("accountNumber")
+                if (id.isNotEmpty()) out.add(DeviceItem(id, dn, an))
+                i++
+            }
+            out
+        }
+    }
+
+    private suspend fun fetchPresence(companyId: String): Map<String, PresenceInfo> {
+        return withContext(Dispatchers.IO) {
+            val url = Constants.SERVER_URL + "/v1/companies/" + companyId + "/presence"
+            val req = Request.Builder().url(url).get().build()
+            val resp = httpClient.newCall(req).execute()
+            val body = resp.body?.string() ?: "{}"
+            val obj = JSONObject(body)
+            val out = mutableMapOf<String, PresenceInfo>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val v = obj.optJSONObject(k) ?: JSONObject()
+                val online = v.optBoolean("online", false)
+                val lastSeen = if (v.has("lastSeen")) v.optLong("lastSeen") else null
+                out[k] = PresenceInfo(online, lastSeen)
+            }
+            out
+        }
+    }
+
+    private suspend fun fetchChannelsWithCounts(companyId: String, presence: Map<String, PresenceInfo>): List<ChannelItem> {
+        return withContext(Dispatchers.IO) {
+            val url = Constants.SERVER_URL + "/v1/companies/" + companyId + "/channels"
+            val req = Request.Builder().url(url).get().build()
+            val resp = httpClient.newCall(req).execute()
+            val body = resp.body?.string() ?: "[]"
+            val arr = JSONArray(body)
+            val out = mutableListOf<ChannelItem>()
+            var i = 0
+            while (i < arr.length()) {
+                val ch = arr.getJSONObject(i)
+                val cid = ch.optString("id")
+                val name = ch.optString("name")
+                var members = 0
+                var online = 0
+                var selfMember = false
+                if (cid.isNotEmpty()) {
+                    val murl = Constants.SERVER_URL + "/v1/channels/" + cid + "/members"
+                    val mreq = Request.Builder().url(murl).get().build()
+                    val mresp = httpClient.newCall(mreq).execute()
+                    val mbody = mresp.body?.string() ?: "[]"
+                    val marr = JSONArray(mbody)
+                    var j = 0
+                    while (j < marr.length()) {
+                        val d = marr.getJSONObject(j)
+                        val did = d.optString("id")
+                        members++
+                        if (presence[did]?.online == true) online++
+                        if (!selfMember && deviceId != null && did == deviceId) selfMember = true
+                        j++
+                    }
+                    if (selfMember) {
+                        out.add(ChannelItem(cid, name, members, online))
+                    }
+                }
+                i++
+            }
+            out
+        }
+    }
+
+    private suspend fun ensureMembership(channelId: String, deviceId: String) {
+        withContext(Dispatchers.IO) {
+            val murl = Constants.SERVER_URL + "/v1/channels/" + channelId + "/members"
+            val chkReq = Request.Builder().url(murl).get().build()
+            val chkResp = httpClient.newCall(chkReq).execute()
+            val body = chkResp.body?.string() ?: "[]"
+            val arr = JSONArray(body)
+            var isMember = false
+            var i = 0
+            while (i < arr.length()) {
+                val d = arr.getJSONObject(i)
+                if (d.optString("id") == deviceId) { isMember = true; break }
+                i++
+            }
+            if (!isMember) {
+                val payload = JSONObject().apply { put("deviceId", deviceId) }.toString()
+                val reqBody = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
+                val addReq = Request.Builder().url(murl).post(reqBody).build()
+                httpClient.newCall(addReq).execute().close()
+            }
+        }
+    }
+
+    private suspend fun ensureDmChannel(otherDeviceId: String): String {
+        return withContext(Dispatchers.IO) {
+            val cid = companyId ?: return@withContext ""
+            val selfId = deviceId ?: return@withContext ""
+            val a = listOf(selfId, otherDeviceId).sorted()
+            val dmName = "DM:" + a[0] + ":" + a[1]
+            val curl = Constants.SERVER_URL + "/v1/companies/" + cid + "/channels"
+            val req = Request.Builder().url(curl).get().build()
+            val resp = httpClient.newCall(req).execute()
+            val body = resp.body?.string() ?: "[]"
+            val arr = JSONArray(body)
+            var existingId: String? = null
+            var i = 0
+            while (i < arr.length()) {
+                val ch = arr.getJSONObject(i)
+                if (ch.optString("name") == dmName) { existingId = ch.optString("id"); break }
+                i++
+            }
+            val channelId = if (existingId != null) existingId!! else run {
+                val payload = JSONObject().apply { put("name", dmName) }.toString()
+                val reqBody = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
+                val createReq = Request.Builder().url(curl).post(reqBody).build()
+                val createResp = httpClient.newCall(createReq).execute()
+                val cbody = createResp.body?.string() ?: "{}"
+                JSONObject(cbody).optString("id")
+            }
+            if (channelId.isNotEmpty()) {
+                ensureMembership(channelId, selfId)
+                ensureMembership(channelId, otherDeviceId)
+            }
+            channelId
+        }
+    }
+
+    private suspend fun startDirectContact(otherDeviceId: String, otherName: String) {
+        if (deviceId != null && deviceId == otherDeviceId) {
+            showToast("Select another contact")
+            return
+        }
+        val chId = ensureDmChannel(otherDeviceId)
+        if (chId.isNotEmpty()) {
+            roomId = chId
+            activeSessionName = otherName
+            activeSessionType = "contact"
+            signalingClient.joinChannel(chId, userId, userName)
+            saveRecent(RecentItem("contact", otherDeviceId, otherName, System.currentTimeMillis()))
+        } else {
+            showToast("Unable to start contact talk")
+        }
+    }
+
+    private suspend fun startChannelTalk(channelId: String, channelName: String) {
+        val selfId = deviceId ?: return
+        ensureMembership(channelId, selfId)
+        roomId = channelId
+        activeSessionName = channelName
+        activeSessionType = "channel"
+        signalingClient.joinChannel(channelId, userId, userName)
+        saveRecent(RecentItem("channel", channelId, channelName, System.currentTimeMillis()))
+    }
+
+    private fun loadRecents(): List<RecentItem> {
+        return runCatching {
+            val prefs = getSharedPreferences("pptapp", MODE_PRIVATE)
+            val s = prefs.getString("recents", "[]") ?: "[]"
+            val arr = JSONArray(s)
+            val out = mutableListOf<RecentItem>()
+            var i = 0
+            while (i < arr.length()) {
+                val o = arr.getJSONObject(i)
+                val t = o.optString("type")
+                val id = o.optString("refId")
+                val nm = o.optString("name")
+                val ts = o.optLong("ts")
+                if (t.isNotEmpty() && id.isNotEmpty()) out.add(RecentItem(t, id, nm, ts))
+                i++
+            }
+            out
+        }.getOrElse { emptyList() }
+    }
+
+    private fun saveRecent(item: RecentItem) {
+        runCatching {
+            recents.removeAll { it.type == item.type && it.refId == item.refId }
+            recents.add(0, item)
+            if (recents.size > 50) recents.removeLast()
+            val arr = JSONArray()
+            recents.forEach { r ->
+                val o = JSONObject()
+                o.put("type", r.type)
+                o.put("refId", r.refId)
+                o.put("name", r.name)
+                o.put("ts", r.ts)
+                arr.put(o)
+            }
+            val prefs = getSharedPreferences("pptapp", MODE_PRIVATE)
+            prefs.edit().putString("recents", arr.toString()).apply()
+        }
+    }
+
+    private fun removeRecent(item: RecentItem) {
+        runCatching {
+            recents.removeAll { it.type == item.type && it.refId == item.refId }
+            val arr = JSONArray()
+            recents.forEach { r ->
+                val o = JSONObject()
+                o.put("type", r.type)
+                o.put("refId", r.refId)
+                o.put("name", r.name)
+                o.put("ts", r.ts)
+                arr.put(o)
+            }
+            val prefs = getSharedPreferences("pptapp", MODE_PRIVATE)
+            prefs.edit().putString("recents", arr.toString()).apply()
+        }
+    }
+
+    private fun toggleSpeaker() {
+        runCatching {
+            val isSpeakerOn = true
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager.setSpeakerphoneOn(!isSpeakerOn)
+        }
+    }
+
+    private fun performLogout() {
+        runCatching {
+            val prefs = getSharedPreferences("pptapp", MODE_PRIVATE)
+            prefs.edit().remove("authToken").apply()
+            authToken = null
+            isAuthenticated = false
+            roomId = ""
+            activeSessionName = null
+            activeSessionType = null
+            signalingClient.disconnect()
+        }
+    }
+
+    private fun endSession() {
+        uiScope.launch {
+            isTransmitting = false
+            currentSpeaker = null
+            stopTransmitting()
+            if (roomId.isNotEmpty()) {
+                signalingClient.leaveChannel(roomId, userId)
+            }
+            androidMediasoupController.reset()
+            sendTransportId = null
+            recvTransportId = null
+            currentProducerId = null
+            dtlsParametersJson = null
+            rtpParametersJson = null
+            pendingSendTransportInfo = null
+            pendingRecvTransportInfo = null
+            roomId = ""
+            activeSessionName = null
+            activeSessionType = null
         }
     }
 
@@ -505,7 +938,7 @@ class MainActivity : ComponentActivity() {
             KeyEvent.KEYCODE_VOLUME_DOWN -> {
                 volumeDownPressStart = System.currentTimeMillis()
                 wasTransmittingBeforePress = isTransmitting
-                if (hasPermission && isConnectedToServer) {
+                if (hasPermission && isConnectedToServer && roomId.isNotEmpty()) {
                     uiScope.launch {
                         if (!isTransmitting) {
                             isTransmitting = true
@@ -517,7 +950,7 @@ class MainActivity : ComponentActivity() {
                     }
                     true
                 } else {
-                    showToast("Need permission and connection!")
+                    showToast("Join a contact or channel first")
                     false
                 }
             }
@@ -531,7 +964,7 @@ class MainActivity : ComponentActivity() {
             KeyEvent.KEYCODE_VOLUME_DOWN -> {
                 val duration = System.currentTimeMillis() - volumeDownPressStart
                 val isLongPress = duration >= longPressThresholdMs
-                if (hasPermission && isConnectedToServer) {
+                if (hasPermission && isConnectedToServer && roomId.isNotEmpty()) {
                     uiScope.launch {
                         val shouldStop = if (isLongPress) {
                             !wasTransmittingBeforePress
@@ -574,200 +1007,221 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(
+fun MainTabbedScreen(
+    selectedTabIndex: Int,
+    onSelectTab: (Int) -> Unit,
+    accountDisplayName: String,
+    contacts: List<DeviceItem>,
+    channels: List<ChannelItem>,
+    presenceMap: Map<String, PresenceInfo>,
+    recents: List<RecentItem>,
+    showSettingsMenu: Boolean,
+    onToggleSettingsMenu: () -> Unit,
+    onLogout: () -> Unit,
+    onToggleSpeaker: () -> Unit,
+    onContactClick: (DeviceItem) -> Unit,
+    onChannelClick: (ChannelItem) -> Unit,
+    onRecentClick: (RecentItem) -> Unit,
+    onDeleteRecent: (RecentItem) -> Unit
+) {
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            TopAppBar(
+                title = { Text("PTT") },
+                actions = {
+                    Text(
+                        text = "⋮",
+                        modifier = Modifier
+                            .padding(8.dp)
+                            .clickable { onToggleSettingsMenu() }
+                    )
+                    DropdownMenu(expanded = showSettingsMenu, onDismissRequest = { onToggleSettingsMenu() }) {
+                        DropdownMenuItem(text = { Text("Account: " + accountDisplayName) }, onClick = {}, enabled = false)
+                        DropdownMenuItem(text = { Text("Logout") }, onClick = { onToggleSettingsMenu(); onLogout() })
+                        DropdownMenuItem(text = { Text("Toggle Speaker") }, onClick = { onToggleSettingsMenu(); onToggleSpeaker() })
+                    }
+                }
+            )
+
+            TabRow(selectedTabIndex = selectedTabIndex) {
+                Tab(selected = selectedTabIndex == 0, onClick = { onSelectTab(0) }, text = { Text("Recents") })
+                Tab(selected = selectedTabIndex == 1, onClick = { onSelectTab(1) }, text = { Text("Contacts") })
+                Tab(selected = selectedTabIndex == 2, onClick = { onSelectTab(2) }, text = { Text("Channels") })
+            }
+
+            Box(modifier = Modifier.weight(1f)) {
+                when (selectedTabIndex) {
+                    0 -> RecentsTab(recents = recents, onRecentClick = onRecentClick, onDeleteRecent = onDeleteRecent)
+                    1 -> ContactsTab(contacts = contacts, presenceMap = presenceMap, onContactClick = onContactClick)
+                    else -> ChannelsTab(channels = channels, onChannelClick = onChannelClick)
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TalkScreen(
+    title: String,
     isTransmitting: Boolean,
     currentSpeaker: String?,
     hasPermission: Boolean,
-    onPTTPressed: () -> Unit,
-    onPTTReleased: () -> Unit,
-    onJoinChannel: () -> Unit,
-    onLeaveChannel: () -> Unit,
     isConnectedToServer: Boolean,
-    userId: String,
-    connectedCount: Int,
-    onRequestPermission: () -> Unit
+    onBack: () -> Unit,
+    onPTTPressed: () -> Unit,
+    onPTTReleased: () -> Unit
 ) {
-    val context = LocalContext.current
-    val scrollState = rememberScrollState()
-
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            // Header with permission status
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "PTT Communicator",
-                    style = MaterialTheme.typography.headlineLarge,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-
-                // Permission status badge
-                Surface(
-                    color = if (hasPermission) Color.Green.copy(alpha = 0.2f)
-                    else Color.Red.copy(alpha = 0.2f),
-                    shape = MaterialTheme.shapes.small
-                ) {
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            TopAppBar(
+                navigationIcon = {
                     Text(
-                        text = if (hasPermission) "✓ Microphone Granted"
-                        else "✗ Microphone Needed",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (hasPermission) Color.Green else Color.Red,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Surface(
-                    color = if (isConnectedToServer) Color.Green.copy(alpha = 0.2f)
-                    else Color.Red.copy(alpha = 0.2f),
-                    shape = MaterialTheme.shapes.small
-                ) {
-                    Text(
-                        text = if (isConnectedToServer) "✓ Connected"
-                        else "✗ Not Connected",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (isConnectedToServer) Color.Green else Color.Red,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "ID: $userId",
-                    style = MaterialTheme.typography.labelSmall
-                )
-                Text(
-                    text = "Users: $connectedCount",
-                    style = MaterialTheme.typography.labelSmall
-                )
-            }
-
-            // Status Panel
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isTransmitting) Color.Red.copy(alpha = 0.1f)
-                    else MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = if (isTransmitting) "TRANSMITTING" else "LISTENING",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = if (isTransmitting) Color.Red else Color.Green
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = currentSpeaker ?: "No one speaking",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-
-                    // Visual indicator
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Box(
+                        text = "←",
                         modifier = Modifier
-                            .size(24.dp)
-                            .background(
-                                color = if (isTransmitting) Color.Red else Color.Green,
-                                shape = MaterialTheme.shapes.small
-                            )
+                            .padding(8.dp)
+                            .clickable { onBack() }
                     )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // PTT Button - More responsive
-            PTTButton(
-                isPressed = isTransmitting,
-                enabled = hasPermission && isConnectedToServer,
-                connected = isConnectedToServer,
-                onPress = onPTTPressed,
-                onRelease = onPTTReleased
+                },
+                title = { Text(title) }
             )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // Controls
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                Button(
-                    onClick = onJoinChannel,
-                    enabled = hasPermission && isConnectedToServer
-                ) {
-                    Text("Join Channel")
-                }
-
-                Button(
-                    onClick = onLeaveChannel,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error
+            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    StatusRow(
+                        isTransmitting = isTransmitting,
+                        currentSpeaker = currentSpeaker,
+                        hasPermission = hasPermission,
+                        isConnected = isConnectedToServer,
+                        userId = "",
+                        connectedCount = 0
                     )
-                ) {
-                    Text("Leave")
+                    Spacer(modifier = Modifier.height(24.dp))
+                    PTTButton(
+                        isPressed = isTransmitting,
+                        enabled = hasPermission && isConnectedToServer,
+                        connected = isConnectedToServer,
+                        onPress = onPTTPressed,
+                        onRelease = onPTTReleased
+                    )
                 }
             }
+        }
+    }
+}
 
-            // Permission Button
-            if (!hasPermission) {
-                Button(
-                    onClick = onRequestPermission,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.tertiary
-                    ),
-                    modifier = Modifier.padding(top = 16.dp)
-                ) {
-                    Text("Grant Microphone Permission")
-                }
-            }
+@Composable
+fun StatusRow(
+    isTransmitting: Boolean,
+    currentSpeaker: String?,
+    hasPermission: Boolean,
+    isConnected: Boolean,
+    userId: String,
+    connectedCount: Int
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(text = if (isTransmitting) "TRANSMITTING" else "LISTENING", color = if (isTransmitting) Color.Red else Color.Green)
+        Text(text = currentSpeaker ?: "Idle")
+        Text(text = if (hasPermission) "Mic ✓" else "Mic ✗", color = if (hasPermission) Color.Green else Color.Red)
+        Text(text = if (isConnected) "Net ✓" else "Net ✗", color = if (isConnected) Color.Green else Color.Red)
+        Text(text = userId)
+        Text(text = connectedCount.toString())
+    }
+}
 
-            // Instructions
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(top = 16.dp)
+@Composable
+fun RecentsTab(recents: List<RecentItem>, onRecentClick: (RecentItem) -> Unit, onDeleteRecent: (RecentItem) -> Unit) {
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        items(recents, key = { it.type + ":" + it.refId }) { r ->
+            val density = LocalContext.current.resources.displayMetrics.density
+            val thresholdPx = 120f * density
+            var offsetX by remember { mutableStateOf(0f) }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(64.dp)
             ) {
-                Text(
-                    text = "Hold button to speak, release to listen",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
-                )
-                Text(
-                    text = "Volume Down = Hardware PTT",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                )
-                Text(
-                    text = "Status: ${if (isTransmitting) "Transmitting" else "Ready"}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-                Text(
-                    text = if (isConnectedToServer) "Network: Connected" else "Network: Not Connected",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                    modifier = Modifier.padding(top = 4.dp)
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Red),
+                    contentAlignment = Alignment.CenterEnd
+                ) {
+                    Text("Delete", color = Color.White, modifier = Modifier.padding(16.dp))
+                }
+
+                Row(
+                    modifier = Modifier
+                        .offset { IntOffset(offsetX.roundToInt(), 0) }
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .pointerInput(Unit) {
+                            detectHorizontalDragGestures(
+                                onHorizontalDrag = { _, dragAmount ->
+                                    offsetX += dragAmount
+                                },
+                                onDragEnd = {
+                                    if (abs(offsetX) > thresholdPx) {
+                                        onDeleteRecent(r)
+                                    }
+                                    offsetX = 0f
+                                }
+                            )
+                        }
+                        .clickable { onRecentClick(r) }
+                        .padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = r.name)
+                        Text(text = if (r.type == "contact") "Contact" else "Channel")
+                    }
+                    Text(text = "Swipe to delete")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ContactsTab(contacts: List<DeviceItem>, presenceMap: Map<String, PresenceInfo>, onContactClick: (DeviceItem) -> Unit) {
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        items(contacts) { d ->
+            val online = presenceMap[d.id]?.online == true
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onContactClick(d) }
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(text = d.displayName)
+                Text(text = if (online) "Online" else "Offline", color = if (online) Color.Green else Color.Red)
+            }
+        }
+    }
+}
+
+@Composable
+fun ChannelsTab(channels: List<ChannelItem>, onChannelClick: (ChannelItem) -> Unit) {
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        items(channels) { c ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onChannelClick(c) }
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(text = c.name)
+                Text(text = c.online.toString() + "/" + c.members.toString())
             }
         }
     }
@@ -826,3 +1280,91 @@ fun PTTButton(
         }
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LoginScreen(
+    companyId: String,
+    accountNumber: String,
+    password: String,
+    isConnected: Boolean,
+    isLoggingIn: Boolean,
+    errorMessage: String?,
+    onCompanyIdChange: (String) -> Unit,
+    onAccountNumberChange: (String) -> Unit,
+    onPasswordChange: (String) -> Unit,
+    onLogin: () -> Unit
+) {
+    val scrollState = rememberScrollState()
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Device Login",
+                style = MaterialTheme.typography.headlineLarge,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            Surface(
+                color = if (isConnected) Color.Green.copy(alpha = 0.2f) else Color.Red.copy(alpha = 0.2f),
+                shape = MaterialTheme.shapes.small
+            ) {
+                Text(
+                    text = if (isConnected) "✓ Connected" else "✗ Not Connected",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isConnected) Color.Green else Color.Red,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedTextField(
+                value = companyId,
+                onValueChange = onCompanyIdChange,
+                label = { Text("Company ID") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = accountNumber,
+                onValueChange = onAccountNumberChange,
+                label = { Text("Account Number") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = password,
+                onValueChange = onPasswordChange,
+                label = { Text("Password") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                visualTransformation = PasswordVisualTransformation()
+            )
+            if (!errorMessage.isNullOrEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = errorMessage ?: "",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(onClick = onLogin, enabled = isConnected && !isLoggingIn) {
+                Text(if (isLoggingIn) "Logging in…" else "Login")
+            }
+        }
+    }
+}
+
+data class DeviceItem(val id: String, val displayName: String, val accountNumber: String)
+data class ChannelItem(val id: String, val name: String, val members: Int, val online: Int)
+data class PresenceInfo(val online: Boolean, val lastSeen: Long?)
+data class RecentItem(val type: String, val refId: String, val name: String, val ts: Long)

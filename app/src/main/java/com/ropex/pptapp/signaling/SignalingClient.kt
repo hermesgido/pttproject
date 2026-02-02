@@ -17,6 +17,8 @@ class SignalingClient(
         fun onConnected()
         fun onDisconnected(reason: String)
         fun onError(error: String)
+        fun onAuthOk(deviceId: String, companyId: String)
+        fun onAuthError(error: String)
         fun onJoinSuccess(channelId: String, userId: String)
         fun onJoinError(error: String)
         fun onSpeakGranted()
@@ -31,6 +33,7 @@ class SignalingClient(
         fun onNewProducer(data: JSONObject)
         fun onConsumerCreated(data: JSONObject)
         fun onUsersList(users: JSONArray)
+        fun onProducerOk(producerId: String)
     }
 
     fun connect() {
@@ -52,6 +55,14 @@ class SignalingClient(
         }
     }
 
+    fun authConnect(token: String, userName: String) {
+        val data = JSONObject().apply {
+            put("token", token)
+            put("userName", userName)
+        }
+        socket?.emit("auth:connect", data)
+    }
+
     private fun setupEventListeners() {
         socket?.apply {
             on(Socket.EVENT_CONNECT) {
@@ -68,6 +79,19 @@ class SignalingClient(
                 val error = args[0]?.toString() ?: "Unknown error"
                 Log.e("Signaling", "Connection error: $error")
                 listener.onError("Connection error: $error")
+            }
+
+            on("auth:ok") { args ->
+                val data = args[0] as JSONObject
+                val deviceId = data.getString("deviceId")
+                val companyId = data.getString("companyId")
+                listener.onAuthOk(deviceId, companyId)
+            }
+
+            on("auth:error") { args ->
+                val data = args[0] as JSONObject
+                val error = data.optString("error", "auth error")
+                listener.onAuthError(error)
             }
 
             // Add these event handlers
@@ -138,6 +162,12 @@ class SignalingClient(
             on("consumer-created") { args ->
                 val data = args[0] as JSONObject
                 listener.onConsumerCreated(data)
+            }
+
+            on("producer-ok") { args ->
+                val data = args[0] as JSONObject
+                val pid = data.optString("producerId")
+                if (pid.isNotEmpty()) listener.onProducerOk(pid)
             }
         }
     }
@@ -214,6 +244,30 @@ class SignalingClient(
         }
         socket?.emit("produce-audio", data)
     }
+
+  fun produceAudioSync(transportId: String, rtpParameters: JSONObject, timeoutMs: Long = 2000): String {
+    val data = JSONObject().apply {
+      put("transportId", transportId)
+      put("kind", "audio")
+      put("rtpParameters", rtpParameters)
+    }
+    var outId: String = ""
+    try {
+      val latch = java.util.concurrent.CountDownLatch(1)
+      socket?.emit("produce-audio", data, io.socket.client.Ack { args ->
+        try {
+          if (args != null && args.isNotEmpty()) {
+            val obj = args[0] as? JSONObject
+            val pid = obj?.optString("producerId") ?: ""
+            if (pid.isNotEmpty()) outId = pid
+          }
+        } catch (_: Throwable) {}
+        latch.countDown()
+      })
+      latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+    } catch (_: Throwable) {}
+    return outId
+  }
 
     fun consumeAudio(producerId: String, rtpCapabilities: JSONObject, transportId: String?) {
         val data = JSONObject().apply {

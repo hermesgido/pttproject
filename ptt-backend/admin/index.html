@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PTT Admin</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; padding: 0; }
+      header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #eee; }
+      .container { padding: 16px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
+      label { display: block; font-size: 12px; margin-top: 8px; }
+      input { width: 100%; padding: 8px; margin-top: 4px; }
+      button { margin-top: 8px; padding: 8px 12px; }
+      ul { padding-left: 18px; }
+      .muted { color: #666; font-size: 12px; }
+    </style>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script crossorigin src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+  </head>
+  <body>
+    <header>
+      <div>PTT Admin</div>
+      <div class="muted">SaaS Companies • Channels • Devices</div>
+    </header>
+    <div id="root" class="container"></div>
+    <script type="text/babel">
+      const { useState, useEffect } = React;
+
+      const API = {
+        async companies() { return fetch('/v1/companies').then(r => r.json()); },
+        async addCompany(name) { return fetch('/v1/companies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}).then(r=>r.json()); },
+        async devices(companyId) { return fetch(`/v1/companies/${companyId}/devices`).then(r=>r.json()); },
+        async addDevice(companyId, displayName, password) { return fetch(`/v1/companies/${companyId}/devices`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({displayName,password})}).then(r=>r.json()); },
+        async channels(companyId) { return fetch(`/v1/companies/${companyId}/channels`).then(r=>r.json()); },
+        async addChannel(companyId, name) { return fetch(`/v1/companies/${companyId}/channels`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}).then(r=>r.json()); },
+        async members(channelId) { return fetch(`/v1/channels/${channelId}/members`).then(r=>r.json()); },
+        async addMember(channelId, deviceId) { return fetch(`/v1/channels/${channelId}/members`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({deviceId})}).then(r=>r.json()); },
+        async removeMember(channelId, deviceId) { return fetch(`/v1/channels/${channelId}/members/${deviceId}`,{method:'DELETE'}).then(r=>r.json()); },
+        async presence(companyId) { return fetch(`/v1/companies/${companyId}/presence`).then(r=>r.json()); },
+        async deleteCompany(companyId) { const r = await fetch(`/v1/companies/${companyId}`,{method:'DELETE'}); if (!r.ok) throw new Error(`Company delete failed: ${r.status}`); return r.json(); },
+        async deleteDevice(companyId, deviceId) { const r = await fetch(`/v1/companies/${companyId}/devices/${deviceId}`,{method:'DELETE'}); if (!r.ok) throw new Error(`Device delete failed: ${r.status}`); return r.json(); },
+        async deleteChannel(companyId, channelId) { const r = await fetch(`/v1/companies/${companyId}/channels/${channelId}`,{method:'DELETE'}); if (!r.ok) throw new Error(`Channel delete failed: ${r.status}`); return r.json(); }
+      };
+
+      function Admin() {
+        const [companies, setCompanies] = useState([]);
+        const [selected, setSelected] = useState(null);
+        const [devices, setDevices] = useState([]);
+        const [channels, setChannels] = useState([]);
+        const [presence, setPresence] = useState({});
+        const [newCompany, setNewCompany] = useState('');
+        const [newDeviceName, setNewDeviceName] = useState('');
+        const [newDevicePassword, setNewDevicePassword] = useState('');
+        const [newChannelName, setNewChannelName] = useState('');
+        const [members, setMembers] = useState([]);
+        const [selectedChannel, setSelectedChannel] = useState(null);
+
+        useEffect(() => { API.companies().then(setCompanies); }, []);
+        useEffect(() => {
+          if (!selected) return;
+          API.devices(selected.id).then(setDevices);
+          API.channels(selected.id).then(setChannels);
+          API.presence(selected.id).then(setPresence);
+        }, [selected]);
+
+        async function createCompany() {
+          if (!newCompany.trim()) return;
+          const c = await API.addCompany(newCompany.trim());
+          setCompanies([...companies, c]);
+          setNewCompany('');
+        }
+
+        async function createDevice() {
+          if (!selected || !newDeviceName.trim() || !newDevicePassword) return;
+          const d = await API.addDevice(selected.id, newDeviceName.trim(), newDevicePassword);
+          setDevices([...devices, d]);
+          setNewDeviceName(''); setNewDevicePassword('');
+        }
+
+        async function createChannel() {
+          if (!selected || !newChannelName.trim()) return;
+          const ch = await API.addChannel(selected.id, newChannelName.trim());
+          setChannels([...channels, ch]);
+          setNewChannelName('');
+        }
+
+        async function loadMembers(ch) {
+          setSelectedChannel(ch);
+          const list = await API.members(ch.id);
+          setMembers(list);
+        }
+
+        async function addMemberToSelected(deviceId) {
+          if (!selectedChannel) return;
+          await API.addMember(selectedChannel.id, deviceId);
+          loadMembers(selectedChannel);
+        }
+
+        async function removeMemberFromSelected(deviceId) {
+          if (!selectedChannel) return;
+          await API.removeMember(selectedChannel.id, deviceId);
+          loadMembers(selectedChannel);
+        }
+
+        async function deleteCompanyItem(c) {
+          try {
+            await API.deleteCompany(c.id);
+            setCompanies(companies.filter(x => x.id !== c.id));
+            if (selected && selected.id === c.id) {
+              setSelected(null);
+              setDevices([]);
+              setChannels([]);
+              setPresence({});
+              setMembers([]);
+              setSelectedChannel(null);
+            }
+          } catch (e) {
+            alert(e.message);
+          }
+        }
+
+        async function deleteDeviceItem(d) {
+          try {
+            if (!selected) return;
+            await API.deleteDevice(selected.id, d.id);
+            const ds = await API.devices(selected.id);
+            setDevices(ds);
+            if (selectedChannel) {
+              loadMembers(selectedChannel);
+            }
+            const p = await API.presence(selected.id);
+            setPresence(p);
+          } catch (e) {
+            alert(e.message);
+          }
+        }
+
+        async function deleteChannelItem(ch) {
+          try {
+            if (!selected) return;
+            await API.deleteChannel(selected.id, ch.id);
+            const cs = await API.channels(selected.id);
+            setChannels(cs);
+            if (selectedChannel && selectedChannel.id === ch.id) {
+              setSelectedChannel(null);
+              setMembers([]);
+            } else if (selectedChannel) {
+              loadMembers(selectedChannel);
+            }
+          } catch (e) {
+            alert(e.message);
+          }
+        }
+
+        return (
+          <div className="grid">
+            <div className="card">
+              <h3>Companies</h3>
+              <ul>
+                {companies.map(c => (
+                  <li key={c.id}>
+                    <button onClick={() => setSelected(c)}>{c.name}</button>
+                    <button style={{marginLeft:8}} onClick={() => deleteCompanyItem(c)}>Delete</button>
+                  </li>
+                ))}
+              </ul>
+              <label>New Company</label>
+              <input value={newCompany} onChange={e=>setNewCompany(e.target.value)} placeholder="Acme Inc" />
+              <button onClick={createCompany}>Create</button>
+            </div>
+            <div className="card">
+              <h3>Details {selected ? `– ${selected.name}` : ''}</h3>
+              {selected ? (
+                <div>
+                  <h4>Devices</h4>
+                  <ul>
+                    {devices.map(d => (
+                      <li key={d.id}>
+                        {d.displayName} • Acc: <b>{d.accountNumber}</b> {(presence[d.id] && presence[d.id].online) ? '• Online' : ''}
+                        <button style={{marginLeft:8}} onClick={() => deleteDeviceItem(d)}>Delete</button>
+                      </li>
+                    ))}
+                  </ul>
+                  <label>Device Name</label>
+                  <input value={newDeviceName} onChange={e=>setNewDeviceName(e.target.value)} placeholder="Radio 1" />
+                  <label>Password</label>
+                  <input type="password" value={newDevicePassword} onChange={e=>setNewDevicePassword(e.target.value)} placeholder="••••••" />
+                  <button onClick={createDevice}>Add Device</button>
+
+                  <h4 style={{marginTop:12}}>Channels</h4>
+                  <ul>
+                    {channels.map(ch => (
+                      <li key={ch.id}>
+                        {ch.name} <button onClick={() => loadMembers(ch)}>Manage Members</button>
+                        <button style={{marginLeft:8}} onClick={() => deleteChannelItem(ch)}>Delete</button>
+                      </li>
+                    ))}
+                  </ul>
+                  <label>Channel Name</label>
+                  <input value={newChannelName} onChange={e=>setNewChannelName(e.target.value)} placeholder="Operations" />
+                  <button onClick={createChannel}>Add Channel</button>
+
+                  {selectedChannel && (
+                    <div style={{marginTop:12}}>
+                      <h4>Members of {selectedChannel.name}</h4>
+                      <ul>
+                        {members.map(m => (
+                          <li key={m.id}>
+                            {m.displayName} ({m.accountNumber}) <button onClick={() => removeMemberFromSelected(m.id)}>Remove</button>
+                          </li>
+                        ))}
+                      </ul>
+                      <div>
+                        <label>Add Member (Device)</label>
+                        <ul>
+                          {devices.filter(d => !members.find(m => m.id === d.id)).map(d => (
+                            <li key={d.id}><button onClick={()=>addMemberToSelected(d.id)}>{d.displayName} ({d.accountNumber})</button></li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="muted">Select a company to manage devices and channels.</div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById('root')).render(<Admin />);
+    </script>
+  </body>
+  </html>

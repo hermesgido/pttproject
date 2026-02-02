@@ -1,6 +1,7 @@
 package com.ropex.pptapp.mediasoup
 
 import android.content.Context
+import android.util.Log
 import org.json.JSONObject
 import org.mediasoup.droid.Device
 import org.mediasoup.droid.MediasoupClient
@@ -20,6 +21,7 @@ class AndroidMediasoupController(
     private var recvTransport: RecvTransport? = null
     private var audioProducer: Producer? = null
     private val consumers = mutableListOf<Consumer>()
+    private var pendingTrack: AudioTrack? = null
 
     fun initialize(context: Context) {
         MediasoupClient.initialize(context)
@@ -36,21 +38,35 @@ class AndroidMediasoupController(
         val iceParameters = info.getJSONObject("iceParameters").toString()
         val iceCandidates = info.getJSONArray("iceCandidates").toString()
         val dtlsParameters = info.getJSONObject("dtlsParameters").toString()
+        Log.d("Mediasoup", "Creating send transport: $id")
         sendTransport = device?.createSendTransport(object : SendTransport.Listener {
             override fun onConnect(transport: org.mediasoup.droid.Transport?, dtlsParameters: String?) {
                 val tId = sendTransport?.id ?: id
+                Log.d("Mediasoup", "Send transport onConnect: tId=$tId dtls=${dtlsParameters?.length ?: 0}")
                 if (dtlsParameters != null) signalingClient.connectTransport(tId, JSONObject(dtlsParameters))
             }
             override fun onProduce(transport: org.mediasoup.droid.Transport?, kind: String?, rtpParameters: String?, appData: String?): String {
                 val tId = sendTransport?.id ?: id
-                if (rtpParameters != null) signalingClient.produceAudio(tId, JSONObject(rtpParameters))
-                return ""
+                Log.d("Mediasoup", "Send transport onProduce: tId=$tId kind=$kind rtpLen=${rtpParameters?.length ?: 0}")
+                if (rtpParameters == null) return ""
+                val pid = signalingClient.produceAudioSync(tId, JSONObject(rtpParameters))
+                Log.d("Mediasoup", "Producer id from ack: ${if (pid.isNotEmpty()) pid else "none"}")
+                return pid
             }
             override fun onProduceData(transport: org.mediasoup.droid.Transport?, sctpStreamParameters: String?, label: String?, protocol: String?, appData: String?): String {
                 return ""
             }
             override fun onConnectionStateChange(transport: org.mediasoup.droid.Transport?, connectionState: String?) {}
         }, id, iceParameters, iceCandidates, dtlsParameters)
+
+        val t = pendingTrack
+        if (t != null && audioProducer == null) {
+            try {
+                Log.d("Mediasoup", "Auto-producing pending track after send transport ready")
+                audioProducer = sendTransport?.produce({ }, t, null, null, null)
+                pendingTrack = null
+            } catch (_: Throwable) {}
+        }
     }
 
     fun createRecvTransport(info: JSONObject) {
@@ -58,9 +74,11 @@ class AndroidMediasoupController(
         val iceParameters = info.getJSONObject("iceParameters").toString()
         val iceCandidates = info.getJSONArray("iceCandidates").toString()
         val dtlsParameters = info.getJSONObject("dtlsParameters").toString()
+        Log.d("Mediasoup", "Creating recv transport: $id")
         recvTransport = device?.createRecvTransport(object : RecvTransport.Listener {
             override fun onConnect(transport: org.mediasoup.droid.Transport?, dtlsParameters: String?) {
                 val tId = recvTransport?.id ?: id
+                Log.d("Mediasoup", "Recv transport onConnect: tId=$tId dtls=${dtlsParameters?.length ?: 0}")
                 if (dtlsParameters != null) signalingClient.connectTransport(tId, JSONObject(dtlsParameters))
             }
             override fun onConnectionStateChange(transport: org.mediasoup.droid.Transport?, connectionState: String?) {}
@@ -68,7 +86,13 @@ class AndroidMediasoupController(
     }
 
     fun produceAudio(track: AudioTrack) {
-        val transport = sendTransport ?: return
+        val transport = sendTransport
+        if (transport == null) {
+            Log.d("Mediasoup", "Send transport not ready, queueing track for produce")
+            pendingTrack = track
+            return
+        }
+        Log.d("Mediasoup", "Producing audio on send transport")
         audioProducer = transport.produce({ }, track, null, null, null)
     }
 
@@ -83,19 +107,54 @@ class AndroidMediasoupController(
             val track = consumer.track
             if (track is AudioTrack) {
                 track.setEnabled(true)
+                Log.d("Mediasoup", "Consumer created id=$id producerId=$producerId kind=$kind trackEnabled=${track.enabled()}")
             }
+            try { consumer.resume() } catch (_: Throwable) {}
         }
     }
 
     fun setConsumersEnabled(enabled: Boolean) {
         consumers.forEach {
+            if (enabled) {
+                try { it.resume() } catch (_: Throwable) {}
+            } else {
+                try { it.pause() } catch (_: Throwable) {}
+            }
             val track = it.track
             if (track is AudioTrack) {
                 track.setEnabled(enabled)
+                Log.d("Mediasoup", "Set consumer id=" + it.id + " enabled=" + enabled + " trackEnabled=" + track.enabled())
             }
         }
     }
 
+    fun reset() {
+        try { audioProducer?.close() } catch (_: Throwable) {}
+        audioProducer = null
+        pendingTrack = null
+        consumers.forEach { c ->
+            try { c.close() } catch (_: Throwable) {}
+        }
+        consumers.clear()
+        try { sendTransport?.close() } catch (_: Throwable) {}
+        sendTransport = null
+        try { recvTransport?.close() } catch (_: Throwable) {}
+        recvTransport = null
+    }
+
 
     fun isDeviceLoaded(): Boolean = deviceLoaded
+
+    fun getDeviceRtpCapabilities(): JSONObject? {
+        return try {
+            val d = device
+            if (d == null) null else {
+                val m = d.javaClass.getMethod("getRtpCapabilities")
+                val s = m.invoke(d) as? String
+                if (s != null) JSONObject(s) else null
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
 }

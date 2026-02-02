@@ -1,0 +1,134 @@
+{
+  "companies": [
+    {
+      "id": "100",
+      "name": "ROPEX",
+      "logoUrl": null,
+      "createdAt": 1769984667282
+    }
+  ],
+  "devices": [
+    {
+      "id": "f1b1840c-bab6-4ca8-b96f-25dce035ccad",
+      "companyId": "100",
+      "accountNumber": "42675",
+      "passwordHash": "$2a$10$.d8XZg0Nu72EJ0wws7N.VO9Bhavf.P9hcsLPrK6l.gDx/638QGSSS",
+      "displayName": "100200",
+      "role": "device",
+      "status": "active",
+      "createdAt": 1769984692285
+    },
+    {
+      "id": "a7225075-3f10-4008-87b3-789f414e6b26",
+      "companyId": "100",
+      "accountNumber": "80894",
+      "passwordHash": "$2a$10$JMabo4SnktUYrMa549lvBOdmjqc7vxlUNrh7RPC011S.HMvsXYGX6",
+      "displayName": "100300",
+      "role": "device",
+      "status": "active",
+      "createdAt": 1769984717186
+    },
+    {
+      "id": "6116e30a-b33e-45db-8f51-de4bb49529be",
+      "companyId": "100",
+      "accountNumber": "88152",
+      "passwordHash": "$2a$10$E36OuVyUrQ50Mg4uIM2d4.KeaK5C0iO19ZWbveFYslj20co4jAvri",
+      "displayName": "100400",
+      "role": "device",
+      "status": "active",
+      "createdAt": 1769984742323
+    },
+    {
+      "id": "2812e3f1-db10-4824-b4ae-ac5b35eb0771",
+      "companyId": "100",
+      "accountNumber": "35941",
+      "passwordHash": "$2a$10$pdBjSYmFjF4wL/AAeh0uwOZblVAF3Df8N.JScwak4MMyfs.n8MkFe",
+      "displayName": "100500",
+      "role": "device",
+      "status": "active",
+      "createdAt": 1769996896303
+    }
+  ],
+  "channels": [
+    {
+      "id": "e82c3edb-f599-4f51-83d1-0ee5b51401c9",
+      "companyId": "100",
+      "name": "Operations",
+      "createdAt": 1769990191496
+    },
+    {
+      "id": "09a6413e-905a-4855-95da-1f0657801d62",
+      "companyId": "100",
+      "name": "General Channel",
+      "createdAt": 1769990203622
+    },
+    {
+      "id": "341a70a2-5f0c-4e2a-8ce9-ed7d1b209405",
+      "companyId": "100",
+      "name": "DM:6116e30a-b33e-45db-8f51-de4bb49529be:f1b1840c-bab6-4ca8-b96f-25dce035ccad",
+      "createdAt": 1769992140740
+    },
+    {
+      "id": "b8687c60-732f-4240-b38d-144c216d4836",
+      "companyId": "100",
+      "name": "DM:6116e30a-b33e-45db-8f51-de4bb49529be:a7225075-3f10-4008-87b3-789f414e6b26",
+      "createdAt": 1769992340047
+    },
+    {
+      "id": "54c270f9-0967-4257-8e67-53ad5960995a",
+      "companyId": "100",
+      "name": "DM:a7225075-3f10-4008-87b3-789f414e6b26:f1b1840c-bab6-4ca8-b96f-25dce035ccad",
+      "createdAt": 1769992706250
+    }
+  ],
+  "memberships": [
+    {
+      "channelId": "e82c3edb-f599-4f51-83d1-0ee5b51401c9",
+      "deviceId": "f1b1840c-bab6-4ca8-b96f-25dce035ccad"
+    },
+    {
+      "channelId": "e82c3edb-f599-4f51-83d1-0ee5b51401c9",
+      "deviceId": "a7225075-3f10-4008-87b3-789f414e6b26"
+    },
+    {
+      "channelId": "09a6413e-905a-4855-95da-1f0657801d62",
+      "deviceId": "f1b1840c-bab6-4ca8-b96f-25dce035ccad"
+    },
+    {
+      "channelId": "09a6413e-905a-4855-95da-1f0657801d62",
+      "deviceId": "a7225075-3f10-4008-87b3-789f414e6b26"
+    },
+    {
+      "channelId": "09a6413e-905a-4855-95da-1f0657801d62",
+      "deviceId": "6116e30a-b33e-45db-8f51-de4bb49529be"
+    },
+    {
+      "channelId": "341a70a2-5f0c-4e2a-8ce9-ed7d1b209405",
+      "deviceId": "f1b1840c-bab6-4ca8-b96f-25dce035ccad"
+    },
+    {
+      "channelId": "341a70a2-5f0c-4e2a-8ce9-ed7d1b209405",
+      "deviceId": "6116e30a-b33e-45db-8f51-de4bb49529be"
+    },
+    {
+      "channelId": "b8687c60-732f-4240-b38d-144c216d4836",
+      "deviceId": "6116e30a-b33e-45db-8f51-de4bb49529be"
+    },
+    {
+      "channelId": "b8687c60-732f-4240-b38d-144c216d4836",
+      "deviceId": "a7225075-3f10-4008-87b3-789f414e6b26"
+    },
+    {
+      "channelId": "54c270f9-0967-4257-8e67-53ad5960995a",
+      "deviceId": "a7225075-3f10-4008-87b3-789f414e6b26"
+    },
+    {
+      "channelId": "54c270f9-0967-4257-8e67-53ad5960995a",
+      "deviceId": "f1b1840c-bab6-4ca8-b96f-25dce035ccad"
+    },
+    {
+      "channelId": "09a6413e-905a-4855-95da-1f0657801d62",
+      "deviceId": "2812e3f1-db10-4824-b4ae-ac5b35eb0771"
+    }
+  ]
+}

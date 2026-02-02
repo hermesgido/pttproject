@@ -3,10 +3,15 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const mediasoup = require('mediasoup');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const { v4: uuidv4 } = require('uuid');
+const storage = require('./storage');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use('/admin', express.static(__dirname + '/admin'));
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -19,8 +24,18 @@ const io = new Server(server, {
 });
 
 // Store active rooms and users
-const rooms = new Map(); // roomId -> { router, peers }
-const peers = new Map(); // socket.id -> { roomId, transport, producer, consumer }
+const rooms = new Map(); // roomId -> PTTRoom
+const peers = new Map(); // socket.id -> { roomId, transport, producer, consumer, userId, userName, deviceId, companyId, transports }
+const presence = new Map(); // deviceId -> { online, lastSeen }
+
+// Persistent data
+let DATA = storage.load();
+function saveData() { storage.save(DATA); }
+function findCompany(id) { return DATA.companies.find(c => c.id === id); }
+function findChannel(id) { return DATA.channels.find(c => c.id === id); }
+function findDeviceByAccount(companyId, accountNumber) { return DATA.devices.find(d => d.companyId === companyId && d.accountNumber === accountNumber); }
+function findDeviceById(id) { return DATA.devices.find(d => d.id === id); }
+function isMember(channelId, deviceId) { return DATA.memberships.some(m => m.channelId === channelId && m.deviceId === deviceId); }
 
 // Mediasoup workers
 let worker;
@@ -113,16 +128,174 @@ class PTTRoom {
 // Initialize mediasoup
 createMediasoupWorker().catch(console.error);
 
+// REST: Companies
+app.get('/v1/companies', (req, res) => {
+  res.json(DATA.companies);
+});
+
+app.post('/v1/companies', (req, res) => {
+  const { name, logoUrl } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'name required' });
+  const id = uuidv4();
+  const company = { id, name, logoUrl: logoUrl || null, createdAt: Date.now() };
+  DATA.companies.push(company);
+  saveData();
+  res.json(company);
+});
+
+// Delete company and all its data
+app.delete('/v1/companies/:companyId', (req, res) => {
+  const { companyId } = req.params;
+  const exists = findCompany(companyId);
+  if (!exists) return res.status(404).json({ error: 'company not found' });
+  DATA.devices.filter(d => d.companyId === companyId).forEach(d => presence.delete(d.id));
+  DATA.memberships = DATA.memberships.filter(m => {
+    const ch = findChannel(m.channelId);
+    return !(ch && ch.companyId === companyId);
+  });
+  DATA.channels = DATA.channels.filter(c => c.companyId !== companyId);
+  DATA.devices = DATA.devices.filter(d => d.companyId !== companyId);
+  DATA.companies = DATA.companies.filter(c => c.id !== companyId);
+  rooms.forEach((room, id) => {
+    const ch = findChannel(id);
+    if (ch && ch.companyId === companyId) rooms.delete(id);
+  });
+  saveData();
+  res.json({ ok: true });
+});
+
+// REST: Devices
+app.get('/v1/companies/:companyId/devices', (req, res) => {
+  const { companyId } = req.params;
+  res.json(DATA.devices.filter(d => d.companyId === companyId));
+});
+
+app.post('/v1/companies/:companyId/devices', async (req, res) => {
+  const { companyId } = req.params;
+  const { displayName, password } = req.body || {};
+  const company = findCompany(companyId);
+  if (!company) return res.status(404).json({ error: 'company not found' });
+  if (!displayName || !password) return res.status(400).json({ error: 'displayName and password required' });
+  const accountNumber = storage.generateAccountNumber(DATA.devices, companyId);
+  const passwordHash = await bcrypt.hash(password, 10);
+  const device = { id: uuidv4(), companyId, accountNumber, passwordHash, displayName, role: 'device', status: 'active', createdAt: Date.now() };
+  DATA.devices.push(device);
+  saveData();
+  res.json({ id: device.id, companyId, accountNumber, displayName, status: device.status });
+});
+
+// Delete device and related memberships
+app.delete('/v1/companies/:companyId/devices/:deviceId', (req, res) => {
+  const { companyId, deviceId } = req.params;
+  const device = findDeviceById(deviceId);
+  if (!device || device.companyId !== companyId) return res.status(404).json({ error: 'device not found' });
+  DATA.memberships = DATA.memberships.filter(m => m.deviceId !== deviceId);
+  DATA.devices = DATA.devices.filter(d => d.id !== deviceId);
+  presence.delete(deviceId);
+  saveData();
+  res.json({ ok: true });
+});
+
+// REST: Channels
+app.get('/v1/companies/:companyId/channels', (req, res) => {
+  const { companyId } = req.params;
+  res.json(DATA.channels.filter(c => c.companyId === companyId));
+});
+
+app.post('/v1/companies/:companyId/channels', (req, res) => {
+  const { companyId } = req.params;
+  const { name } = req.body || {};
+  const company = findCompany(companyId);
+  if (!company) return res.status(404).json({ error: 'company not found' });
+  if (!name) return res.status(400).json({ error: 'name required' });
+  const channel = { id: uuidv4(), companyId, name, createdAt: Date.now() };
+  DATA.channels.push(channel);
+  saveData();
+  res.json(channel);
+});
+
+// Delete channel and its memberships
+app.delete('/v1/companies/:companyId/channels/:channelId', (req, res) => {
+  const { companyId, channelId } = req.params;
+  const channel = findChannel(channelId);
+  if (!channel || channel.companyId !== companyId) return res.status(404).json({ error: 'channel not found' });
+  DATA.memberships = DATA.memberships.filter(m => m.channelId !== channelId);
+  DATA.channels = DATA.channels.filter(c => c.id !== channelId);
+  rooms.delete(channelId);
+  saveData();
+  res.json({ ok: true });
+});
+
+// REST: Channel memberships
+app.get('/v1/channels/:channelId/members', (req, res) => {
+  const { channelId } = req.params;
+  const members = DATA.memberships.filter(m => m.channelId === channelId).map(m => findDeviceById(m.deviceId)).filter(Boolean);
+  res.json(members);
+});
+
+app.post('/v1/channels/:channelId/members', (req, res) => {
+  const { channelId } = req.params;
+  const { deviceId } = req.body || {};
+  const channel = findChannel(channelId);
+  if (!channel) return res.status(404).json({ error: 'channel not found' });
+  const device = findDeviceById(deviceId);
+  if (!device) return res.status(404).json({ error: 'device not found' });
+  if (DATA.memberships.some(m => m.channelId === channelId && m.deviceId === deviceId)) return res.status(409).json({ error: 'already a member' });
+  DATA.memberships.push({ channelId, deviceId });
+  saveData();
+  res.json({ ok: true });
+});
+
+app.delete('/v1/channels/:channelId/members/:deviceId', (req, res) => {
+  const { channelId, deviceId } = req.params;
+  DATA.memberships = DATA.memberships.filter(m => !(m.channelId === channelId && m.deviceId === deviceId));
+  saveData();
+  res.json({ ok: true });
+});
+
+// REST: Auth
+app.post('/v1/auth/login', async (req, res) => {
+  const { companyId, accountNumber, password } = req.body || {};
+  const device = findDeviceByAccount(companyId, accountNumber);
+  if (!device) return res.status(401).json({ error: 'invalid credentials' });
+  const ok = await bcrypt.compare(password, device.passwordHash);
+  if (!ok) return res.status(401).json({ error: 'invalid credentials' });
+  const token = jwt.sign({ companyId, deviceId: device.id }, process.env.JWT_SECRET || 'dev-secret', { expiresIn: '7d' });
+  res.json({ token, device: { id: device.id, displayName: device.displayName, accountNumber: device.accountNumber } });
+});
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log(`🔌 New connection: ${socket.id}`);
 
   let currentRoom = null;
 
+  // Socket auth: attach company/device to this socket
+  socket.on('auth:connect', ({ token, userName }) => {
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret');
+      const { companyId, deviceId } = payload;
+      const existing = peers.get(socket.id) || {};
+      peers.set(socket.id, { ...existing, companyId, deviceId, userName });
+      presence.set(deviceId, { online: true, lastSeen: Date.now() });
+      socket.emit('auth:ok', { deviceId, companyId });
+    } catch (e) {
+      socket.emit('auth:error', { error: 'invalid token' });
+    }
+  });
+
   // Join a PTT room
   socket.on('join-room', async ({ roomId, userId, userName }) => {
     try {
       console.log(`👤 ${userName} (${userId}) joining room: ${roomId}`);
+      const p = peers.get(socket.id);
+      if (p && p.companyId) {
+        const channel = findChannel(roomId);
+        if (!channel || channel.companyId !== p.companyId || !isMember(roomId, p.deviceId)) {
+          socket.emit('join-error', { error: 'not a member or invalid channel' });
+          return;
+        }
+      }
       
       // Create room if it doesn't exist
       if (!rooms.has(roomId)) {
@@ -138,7 +311,7 @@ io.on('connection', (socket) => {
       const transport = await router.createWebRtcTransport({
         listenIps: [{
           ip: '0.0.0.0',
-          announcedIp: process.env.ANNOUNCED_IP || '127.0.0.1'
+          announcedIp: process.env.ANNOUNCED_IP || '192.168.1.132'
         }],
         enableUdp: true,
         enableTcp: true,
@@ -147,7 +320,9 @@ io.on('connection', (socket) => {
       });
 
       // Store peer info
+      const existing = peers.get(socket.id) || {};
       peers.set(socket.id, {
+        ...existing,
         roomId,
         userId,
         userName,
@@ -263,7 +438,7 @@ io.on('connection', (socket) => {
   });
 
   // WebRTC: Produce audio (start sending audio)
-  socket.on('produce-audio', async ({ transportId, kind, rtpParameters }) => {
+  socket.on('produce-audio', async ({ transportId, kind, rtpParameters }, ack) => {
     try {
       const peer = peers.get(socket.id);
       if (!peer) return;
@@ -288,6 +463,16 @@ io.on('connection', (socket) => {
 
       peer.producer = producer;
       console.log(`🎙️ Audio producer created for ${peer.userName}`);
+
+      socket.emit('producer-ok', {
+        producerId: producer.id
+      });
+
+      if (typeof ack === 'function') {
+        try {
+          ack({ producerId: producer.id });
+        } catch (e) {}
+      }
 
       // Notify others in the room about the new producer
       socket.to(peer.roomId).emit('new-producer', {
@@ -352,7 +537,7 @@ io.on('connection', (socket) => {
       const transport = await router.createWebRtcTransport({
         listenIps: [{
           ip: '0.0.0.0',
-          announcedIp: process.env.ANNOUNCED_IP || '127.0.0.1'
+          announcedIp: process.env.ANNOUNCED_IP || '192.168.1.132'
         }],
         enableUdp: true,
         enableTcp: true,
@@ -473,6 +658,17 @@ app.get('/health', (req, res) => {
     peers: peers.size,
     mediasoup: worker ? 'running' : 'stopped'
   });
+});
+
+// Presence endpoint per company
+app.get('/v1/companies/:companyId/presence', (req, res) => {
+  const { companyId } = req.params;
+  const out = {};
+  DATA.devices.filter(d => d.companyId === companyId).forEach(d => {
+    const p = presence.get(d.id) || { online: false, lastSeen: null };
+    out[d.id] = { online: !!p.online, lastSeen: p.lastSeen };
+  });
+  res.json(out);
 });
 
 // Start server
