@@ -48,10 +48,18 @@ class WebRTCManager(
                 Log.d("WebRTC", "Initializing WebRTC...")
 
                 // Initialize WebRTC
-                PeerConnectionFactory.initialize(
-                    PeerConnectionFactory.InitializationOptions.builder(context)
-                        .createInitializationOptions()
-                )
+//                PeerConnectionFactory.initialize(
+//                    PeerConnectionFactory.InitializationOptions.builder(context)
+//                        .createInitializationOptions()
+//                )
+
+                val options = PeerConnectionFactory.InitializationOptions.builder(context)
+                    .setFieldTrials("WebRTC-IntelVP8/Enabled/")
+                    .setEnableInternalTracer(true)
+                    .createInitializationOptions()
+                PeerConnectionFactory.initialize(options)
+                Logging.enableLogToDebugOutput(Logging.Severity.LS_VERBOSE)
+
 
                 audioDeviceModule = JavaAudioDeviceModule.builder(context)
                     .setUseHardwareAcousticEchoCanceler(false)

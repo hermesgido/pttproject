@@ -13,8 +13,9 @@ class PTTManager(private val context: Context) {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
 
+
     private val toneGenerator: ToneGenerator by lazy {
-        ToneGenerator(AudioManager.STREAM_VOICE_CALL, 80)
+        ToneGenerator(AudioManager.STREAM_MUSIC, 100)
     }
 
     // Use StateFlow instead of LiveData
@@ -42,6 +43,7 @@ class PTTManager(private val context: Context) {
         }
 
     fun onPTTPressed() {
+        updateAudioRouting()
         Log.d("PTT", "PTT button pressed")
 
         if (currentChannelId == null || currentUserId == null) {
@@ -103,7 +105,10 @@ class PTTManager(private val context: Context) {
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
                 // Headset routing is automatic
             }
+
         }
+        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0)
     }
 
     private fun playStartTone() {
