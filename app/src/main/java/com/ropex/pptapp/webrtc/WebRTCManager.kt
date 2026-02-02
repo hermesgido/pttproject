@@ -56,7 +56,7 @@ class WebRTCManager(
                 audioDeviceModule = JavaAudioDeviceModule.builder(context)
                     .setUseHardwareAcousticEchoCanceler(false)
                     .setUseHardwareNoiseSuppressor(false)
-                    .setAudioSource(android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION)
+                    .setAudioSource(android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION)
                     .setSamplesReadyCallback(object : JavaAudioDeviceModule.SamplesReadyCallback {
                         override fun onWebRtcAudioRecordSamplesReady(samples: JavaAudioDeviceModule.AudioSamples) {
                             if (!noiseGateEnabled || !isTransmittingFlag) return

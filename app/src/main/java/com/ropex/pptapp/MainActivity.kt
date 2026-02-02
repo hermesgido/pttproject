@@ -348,9 +348,7 @@ class MainActivity : ComponentActivity() {
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             audioManager.setSpeakerphoneOn(true)
 
-            // Set reasonable volume
-            val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
-            audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVolume / 3, 0)
+            setVoiceCallVolumeFraction(0.8f)
 
             Log.d("PTT", "Audio setup complete: mode=MODE_IN_COMMUNICATION, speakerphone=ON")
 
@@ -387,12 +385,22 @@ class MainActivity : ComponentActivity() {
         try {
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             audioManager.setSpeakerphoneOn(true)
+            setVoiceCallVolumeFraction(0.9f)
             Log.d("PTT", "Stopped transmitting")
         } catch (e: Exception) {
             Log.e("PTT", "Stop transmitting failed", e)
         }
         androidMediasoupController.setConsumersEnabled(true)
         signalingClient.resumeConsumer()
+    }
+
+    private fun setVoiceCallVolumeFraction(f: Float) {
+        try {
+            val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+            val vol = kotlin.math.max(1, kotlin.math.min(maxVolume, (maxVolume * f).toInt()))
+            audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, vol, 0)
+            Log.d("PTT", "VOICE_CALL volume set: $vol/$maxVolume")
+        } catch (_: Exception) {}
     }
 
     private fun showToast(message: String) {
@@ -854,6 +862,7 @@ class MainActivity : ComponentActivity() {
             val isSpeakerOn = true
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             audioManager.setSpeakerphoneOn(!isSpeakerOn)
+            setVoiceCallVolumeFraction(0.9f)
         }
     }
 

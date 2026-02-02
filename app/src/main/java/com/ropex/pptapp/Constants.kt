@@ -47,11 +47,11 @@ object Constants {
         // Audio configuration
         const val AUDIO_TRACK_ID = "audio_track"
         const val AUDIO_STREAM_ID = "audio_stream"
-        const val USE_AGC = false
-        const val USE_NOISE_GATE = true
-        const val NOISE_GATE_RMS_THRESHOLD = 1200
-        const val NOISE_GATE_ATTACK_MS = 20
-        const val NOISE_GATE_RELEASE_MS = 250
+        const val USE_AGC = true
+        const val USE_NOISE_GATE = false
+        const val NOISE_GATE_RMS_THRESHOLD = 600
+        const val NOISE_GATE_ATTACK_MS = 600
+        const val NOISE_GATE_RELEASE_MS = 1700
 
         // Constraints
         val AUDIO_CONSTRAINTS = org.webrtc.MediaConstraints().apply {
