@@ -364,12 +364,12 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) {}
         androidMediasoupController.setConsumersEnabled(false)
         signalingClient.pauseConsumer()
-        webRTCManager.setNoiseGate(
-            Constants.WebRTC.USE_NOISE_GATE,
-            Constants.WebRTC.NOISE_GATE_RMS_THRESHOLD,
-            Constants.WebRTC.NOISE_GATE_ATTACK_MS,
-            Constants.WebRTC.NOISE_GATE_RELEASE_MS
-        )
+        // webRTCManager.setNoiseGate(
+        //     Constants.WebRTC.USE_NOISE_GATE,
+        //     Constants.WebRTC.NOISE_GATE_RMS_THRESHOLD,
+        //     Constants.WebRTC.NOISE_GATE_ATTACK_MS,
+        //     Constants.WebRTC.NOISE_GATE_RELEASE_MS
+        // )
         webRTCManager.setTransmitState(true)
         try {
             Log.d("PTT", "Started transmitting")

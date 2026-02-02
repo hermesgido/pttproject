@@ -19,17 +19,7 @@ class WebRTCManager(
     private lateinit var localAudioTrack: AudioTrack
     private var audioSource: AudioSource? = null
     private var audioDeviceModule: AudioDeviceModule? = null
-    private var noiseGateEnabled: Boolean = Constants.WebRTC.USE_NOISE_GATE
-    private var noiseGateThresholdRms: Int = Constants.WebRTC.NOISE_GATE_RMS_THRESHOLD
-    private var noiseGateAttackMs: Int = Constants.WebRTC.NOISE_GATE_ATTACK_MS
-    private var noiseGateReleaseMs: Int = Constants.WebRTC.NOISE_GATE_RELEASE_MS
-    private var noiseGateMinOpenMs: Int = 150
     private var isTransmittingFlag: Boolean = false
-    private var gateOpen: Boolean = false
-    private var belowStartTime: Long = 0L
-    private var emaRms: Double = 0.0
-    private var emaAlpha: Double = 0.2
-    private var lastOpenTime: Long = 0L
 
     private var isInitialized = false
     private var isConnected = false
@@ -63,7 +53,7 @@ class WebRTCManager(
 
                 audioDeviceModule = JavaAudioDeviceModule.builder(context)
                     .setUseHardwareAcousticEchoCanceler(false)
-                    .setUseHardwareNoiseSuppressor(false)
+                    .setUseHardwareNoiseSuppressor(true)
                     .setAudioSource(android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION)
                     .createAudioDeviceModule()
 
@@ -190,7 +180,7 @@ class WebRTCManager(
             try {
                 val audioConstraints = MediaConstraints().apply {
                     mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-                    mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "false"))
                     mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
                     mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
                 }
@@ -207,7 +197,7 @@ class WebRTCManager(
                 try {
                     val fallbackConstraints = MediaConstraints().apply {
                         mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-                        mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                        mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "false"))
                         mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
                         mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
                     }
@@ -291,33 +281,13 @@ class WebRTCManager(
 
     fun isReady(): Boolean = isInitialized && isConnected
 
-    fun setNoiseGate(enabled: Boolean, thresholdRms: Int, attackMs: Int, releaseMs: Int) {
-        executor.execute {
-            noiseGateEnabled = enabled
-            noiseGateThresholdRms = thresholdRms
-            noiseGateAttackMs = attackMs
-            noiseGateReleaseMs = releaseMs
-        }
-    }
+    fun setNoiseGate(enabled: Boolean, thresholdRms: Int, attackMs: Int, releaseMs: Int) {}
 
     fun setTransmitState(isTransmitting: Boolean) {
         executor.execute {
             isTransmittingFlag = isTransmitting
             if (!::localAudioTrack.isInitialized) return@execute
-            if (!noiseGateEnabled) {
-                localAudioTrack.setEnabled(isTransmitting)
-            } else {
-                if (!isTransmitting) {
-                    localAudioTrack.setEnabled(false)
-                    gateOpen = false
-                    belowStartTime = 0L
-                } else {
-                    // Enable immediately; gate may close after sustained low energy
-                    localAudioTrack.setEnabled(true)
-                    gateOpen = true
-                    belowStartTime = 0L
-                }
-            }
+            localAudioTrack.setEnabled(isTransmitting)
         }
     }
 

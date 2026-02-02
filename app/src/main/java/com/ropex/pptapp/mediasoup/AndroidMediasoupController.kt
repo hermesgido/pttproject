@@ -63,7 +63,12 @@ class AndroidMediasoupController(
         if (t != null && audioProducer == null) {
             try {
                 Log.d("Mediasoup", "Auto-producing pending track after send transport ready")
-                audioProducer = sendTransport?.produce({ }, t, null, null, null)
+                val codecOpts = org.json.JSONObject().apply {
+                    put("opusStereo", false)
+                    put("opusDtx", true)
+                    put("opusFec", true)
+                }
+                audioProducer = sendTransport?.produce({ }, t, null, codecOpts.toString(), null)
                 pendingTrack = null
             } catch (_: Throwable) {}
         }
@@ -93,7 +98,12 @@ class AndroidMediasoupController(
             return
         }
         Log.d("Mediasoup", "Producing audio on send transport")
-        audioProducer = transport.produce({ }, track, null, null, null)
+        val codecOpts = org.json.JSONObject().apply {
+            put("opusStereo", false)
+            put("opusDtx", true)
+            put("opusFec", true)
+        }
+        audioProducer = transport.produce({ }, track, null, codecOpts.toString(), null)
     }
 
     fun onConsumerCreated(data: JSONObject) {

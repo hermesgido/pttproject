@@ -59,7 +59,7 @@ async function createMediasoupWorker() {
           useinbandfec: 1,
           usedtx: 1,
           stereo: 1,
-          maxaveragebitrate: 510000
+          maxaveragebitrate: 32000
         }
       }
     ]
