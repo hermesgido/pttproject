@@ -391,6 +391,7 @@ io.on('connection', (socket) => {
       
       // Notify all others in the room
       socket.to(roomId).emit('user-speaking', {
+        roomId,
         userId,
         userName: peers.get(socket.id)?.userName || 'Unknown'
       });
@@ -413,7 +414,7 @@ io.on('connection', (socket) => {
     const stopped = room.stopSpeaking(socket.id);
     if (stopped) {
       // Notify all in room
-      io.to(roomId).emit('user-stopped', { userId });
+      io.to(roomId).emit('user-stopped', { roomId, userId });
       console.log(`🔇 ${peers.get(socket.id)?.userName} stopped speaking in ${roomId}`);
     }
   });
@@ -476,6 +477,7 @@ io.on('connection', (socket) => {
 
       // Notify others in the room about the new producer
       socket.to(peer.roomId).emit('new-producer', {
+        roomId: peer.roomId,
         producerId: producer.id,
         userId: peer.userId,
         userName: peer.userName
