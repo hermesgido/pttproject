@@ -72,11 +72,18 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusTarget
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 
 
 class MainActivity : ComponentActivity() {
@@ -1141,7 +1148,22 @@ fun MainTabbedScreen(
             TabRow(
                 selectedTabIndex = selectedTabIndex,
                 containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.primary
+                contentColor = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .focusTarget()
+                    .onKeyEvent {
+                        val action = it.nativeKeyEvent.action
+                        val keyCode = it.nativeKeyEvent.keyCode
+                        if (action == android.view.KeyEvent.ACTION_DOWN && keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
+                            onSelectTab((selectedTabIndex + 2) % 3)
+                            true
+                        } else if (action == android.view.KeyEvent.ACTION_DOWN && keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) {
+                            onSelectTab((selectedTabIndex + 1) % 3)
+                            true
+                        } else {
+                            false
+                        }
+                    }
             ) {
                 Tab(
                     selected = selectedTabIndex == 0,
@@ -1274,12 +1296,27 @@ fun TalkScreen(
             TabRow(
                 selectedTabIndex = selectedSegment,
                 containerColor = MaterialTheme.colorScheme.surface,
-                contentColor = MaterialTheme.colorScheme.primary
+                contentColor = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .focusTarget()
+                    .onKeyEvent {
+                        val action = it.nativeKeyEvent.action
+                        val keyCode = it.nativeKeyEvent.keyCode
+                        if (action == android.view.KeyEvent.ACTION_DOWN && keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
+                            onSelectSegment((selectedSegment + 3) % 4)
+                            true
+                        } else if (action == android.view.KeyEvent.ACTION_DOWN && keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) {
+                            onSelectSegment((selectedSegment + 1) % 4)
+                            true
+                        } else {
+                            false
+                        }
+                    }
             ) {
-                Tab(selected = selectedSegment == 0, onClick = { onSelectSegment(0) }, icon = { Icon(Icons.Filled.Mic, contentDescription = null) })
-                Tab(selected = selectedSegment == 1, onClick = { onSelectSegment(1) }, icon = { Icon(Icons.Filled.Person, contentDescription = null) })
-                Tab(selected = selectedSegment == 2, onClick = { onSelectSegment(2) }, icon = { Icon(Icons.Filled.Chat, contentDescription = null) })
-                Tab(selected = selectedSegment == 3, onClick = { onSelectSegment(3) }, icon = { Icon(Icons.Filled.Map, contentDescription = null) })
+                Tab(selected = selectedSegment == 0, onClick = { onSelectSegment(0) }, icon = { Icon(Icons.Filled.Mic, contentDescription = "Voice") })
+                Tab(selected = selectedSegment == 1, onClick = { onSelectSegment(1) }, icon = { Icon(Icons.Filled.Person, contentDescription = "Members") })
+                Tab(selected = selectedSegment == 2, onClick = { onSelectSegment(2) }, icon = { Icon(Icons.Filled.Chat, contentDescription = "Chat") })
+                Tab(selected = selectedSegment == 3, onClick = { onSelectSegment(3) }, icon = { Icon(Icons.Filled.Map, contentDescription = "Map") })
             }
 
             // Main Content Area
@@ -1323,7 +1360,9 @@ fun MembersList(members: List<MemberItem>, activeSpeakerId: String?) {
         EmptyState(icon = "👥", message = "No members", subtitle = "Waiting for participants")
     } else {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .focusTarget(),
             contentPadding = PaddingValues(vertical = 8.dp)
         ) {
             items(members, key = { it.id }) { m ->
@@ -1331,7 +1370,14 @@ fun MembersList(members: List<MemberItem>, activeSpeakerId: String?) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 8.dp, vertical = 4.dp)
-                        .clip(RoundedCornerShape(12.dp)),
+                        .clip(RoundedCornerShape(12.dp))
+                        .focusTarget()
+                        .semantics {
+                            role = Role.Button
+                            val speaking = m.id == activeSpeakerId
+                            val status = if (m.online) "Online" else "Offline"
+                            contentDescription = m.name + ", " + status + if (speaking) ", Speaking" else ""
+                        },
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp
                 ) {
@@ -1528,6 +1574,8 @@ fun ModernPTTButton(
     var isButtonPressed by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    var hasFocus by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
@@ -1551,6 +1599,15 @@ fun ModernPTTButton(
             .size(if (isPressed) 220.dp else 200.dp)
             .focusRequester(focusRequester)
             .focusTarget()
+            .onFocusChanged { hasFocus = it.isFocused }
+            .semantics {
+                role = Role.Button
+                contentDescription = when {
+                    !enabled -> if (!connected) "Not Connected" else "No Permission"
+                    isPressed -> "Speaking"
+                    else -> "Push To Talk"
+                }
+            }
             .onKeyEvent {
                 if (!enabled) return@onKeyEvent false
                 val action = it.nativeKeyEvent.action
@@ -1559,6 +1616,7 @@ fun ModernPTTButton(
                     (keyCode == android.view.KeyEvent.KEYCODE_ENTER || keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER || keyCode == android.view.KeyEvent.KEYCODE_SPACE)) {
                     if (!isButtonPressed) {
                         isButtonPressed = true
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onPress()
                     }
                     true
@@ -1566,6 +1624,7 @@ fun ModernPTTButton(
                     (keyCode == android.view.KeyEvent.KEYCODE_ENTER || keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER || keyCode == android.view.KeyEvent.KEYCODE_SPACE)) {
                     if (isButtonPressed) {
                         isButtonPressed = false
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onRelease()
                     }
                     true
@@ -1578,9 +1637,11 @@ fun ModernPTTButton(
                     onPress = {
                         if (enabled) {
                             isButtonPressed = true
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onPress()
                             tryAwaitRelease()
                             isButtonPressed = false
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onRelease()
                         }
                     }
@@ -1598,6 +1659,22 @@ fun ModernPTTButton(
                         Brush.radialGradient(
                             colors = listOf(
                                 Color(0xFFD32F2F).copy(alpha = 0.3f),
+                                Color.Transparent
+                            )
+                        )
+                    )
+            )
+        }
+
+        if (hasFocus && !isPressed) {
+            Box(
+                modifier = Modifier
+                    .size(240.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFF4CAF50).copy(alpha = 0.25f),
                                 Color.Transparent
                             )
                         )

@@ -47,6 +47,16 @@
       "role": "device",
       "status": "active",
       "createdAt": 1769996896303
+    },
+    {
+      "id": "c9ee1091-cb4e-48a3-94a3-09274c95b713",
+      "companyId": "100",
+      "accountNumber": "56576",
+      "passwordHash": "$2a$10$1QAfxdRKlRlfPLyWWtg72OzM1aK7ZaVLdYnLeh3tQueiPFTmnGHFG",
+      "displayName": "100600",
+      "role": "device",
+      "status": "active",
+      "createdAt": 1770110780738
     }
   ],
   "channels": [
@@ -143,6 +153,10 @@
     {
       "channelId": "542ecb64-c9f8-4dff-aff6-2d0d28605a48",
       "deviceId": "f1b1840c-bab6-4ca8-b96f-25dce035ccad"
+    },
+    {
+      "channelId": "09a6413e-905a-4855-95da-1f0657801d62",
+      "deviceId": "c9ee1091-cb4e-48a3-94a3-09274c95b713"
     }
   ]
 }
