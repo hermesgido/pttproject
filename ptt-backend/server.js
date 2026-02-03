@@ -406,6 +406,18 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('page', ({ toDeviceId, roomId, fromUserId, fromUserName }) => {
+    try {
+      const targets = [];
+      peers.forEach((info, sid) => {
+        if (info && info.deviceId === toDeviceId) targets.push(sid);
+      });
+      targets.forEach((sid) => {
+        io.to(sid).emit('page', { roomId, fromUserId, fromUserName });
+      });
+    } catch (e) {}
+  });
+
   // Stop speaking (PTT released)
   socket.on('stop-speaking', ({ roomId, userId }) => {
     const room = rooms.get(roomId);

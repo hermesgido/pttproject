@@ -464,6 +464,10 @@ class MainActivity : ComponentActivity() {
                 isAuthenticated = true
                 showToast("Authenticated")
                 refreshData()
+                try {
+                    val intent = android.content.Intent(this@MainActivity, AlwaysOnPTTService::class.java)
+                    startService(intent)
+                } catch (_: Exception) {}
             }
         }
 
@@ -651,6 +655,14 @@ class MainActivity : ComponentActivity() {
         override fun onProducerOk(producerId: String) {
             Log.d("PTT", "Producer confirmed by server id=$producerId")
         }
+
+        override fun onPage(roomId: String, fromUserId: String, fromUserName: String) {
+            uiScope.launch {
+                runCatching {
+                    saveRecent(RecentItem("contact", fromUserId, fromUserName, System.currentTimeMillis()))
+                }
+            }
+        }
     }
 
     private fun refreshData() {
@@ -824,6 +836,13 @@ class MainActivity : ComponentActivity() {
             activeSessionName = otherName
             activeSessionType = "contact"
             signalingClient.joinChannel(chId, userId, userName)
+            runCatching {
+                signalingClient.pageUser(otherDeviceId, chId, userId, userName)
+            }
+            runCatching {
+                val prefs = getSharedPreferences("pptapp", MODE_PRIVATE)
+                prefs.edit().putString("active_room_id", chId).apply()
+            }
             saveRecent(RecentItem("contact", otherDeviceId, otherName, System.currentTimeMillis()))
         } else {
             showToast("Unable to start contact talk")
@@ -837,6 +856,10 @@ class MainActivity : ComponentActivity() {
         activeSessionName = channelName
         activeSessionType = "channel"
         signalingClient.joinChannel(channelId, userId, userName)
+        runCatching {
+            val prefs = getSharedPreferences("pptapp", MODE_PRIVATE)
+            prefs.edit().putString("active_room_id", channelId).apply()
+        }
         saveRecent(RecentItem("channel", channelId, channelName, System.currentTimeMillis()))
     }
 
@@ -938,6 +961,10 @@ class MainActivity : ComponentActivity() {
             roomId = ""
             activeSessionName = null
             activeSessionType = null
+            runCatching {
+                val prefs = getSharedPreferences("pptapp", MODE_PRIVATE)
+                prefs.edit().remove("active_room_id").apply()
+            }
         }
     }
 

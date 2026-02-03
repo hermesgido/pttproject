@@ -3,9 +3,10 @@ package com.ropex.pptapp
 
 object Constants {
 
-    // Server Configuration - CHANGE TO YOUR COMPUTER'S IP
-//    const val SERVER_URL = "https://ptt.ropex.co.tz"
+    // Server Configuration
+//    const val SERVER_URL = "https://smilies-judicial-corrected-internet.trycloudflare.com"
     const val SERVER_URL = "http://62.84.190.56"
+
 
     // For testing on same device as server:
     // const val SERVER_URL = "http://10.0.2.2:3000"  // Android emulator to localhost

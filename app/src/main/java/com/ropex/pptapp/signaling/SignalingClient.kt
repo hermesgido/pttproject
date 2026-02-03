@@ -34,6 +34,12 @@ class SignalingClient(
         fun onConsumerCreated(data: JSONObject)
         fun onUsersList(users: JSONArray)
         fun onProducerOk(producerId: String)
+        fun onPage(roomId: String, fromUserId: String, fromUserName: String)
+
+      // Room-aware callbacks (optional)
+      fun onUserSpeakingInRoom(roomId: String, userId: String, userName: String) {}
+      fun onUserStoppedInRoom(roomId: String, userId: String) {}
+      fun onNewProducerInRoom(roomId: String, data: JSONObject) {}
     }
 
     fun connect() {
@@ -116,13 +122,17 @@ class SignalingClient(
                 val data = args[0] as JSONObject
                 val userId = data.getString("userId")
                 val userName = data.getString("userName")
+                val roomId = data.optString("roomId", "")
                 listener.onUserSpeaking(userId, userName)
+                if (roomId.isNotEmpty()) listener.onUserSpeakingInRoom(roomId, userId, userName)
             }
 
             on("user-stopped") { args ->
                 val data = args[0] as JSONObject
                 val userId = data.getString("userId")
+                val roomId = data.optString("roomId", "")
                 listener.onUserStopped(userId)
+                if (roomId.isNotEmpty()) listener.onUserStoppedInRoom(roomId, userId)
             }
 
             on("user-joined") { args ->
@@ -156,7 +166,9 @@ class SignalingClient(
 
             on("new-producer") { args ->
                 val data = args[0] as JSONObject
+                val roomId = data.optString("roomId", "")
                 listener.onNewProducer(data)
+                if (roomId.isNotEmpty()) listener.onNewProducerInRoom(roomId, data)
             }
 
             on("consumer-created") { args ->
@@ -168,6 +180,14 @@ class SignalingClient(
                 val data = args[0] as JSONObject
                 val pid = data.optString("producerId")
                 if (pid.isNotEmpty()) listener.onProducerOk(pid)
+            }
+
+            on("page") { args ->
+                val data = args[0] as JSONObject
+                val roomId = data.optString("roomId", "")
+                val fromUserId = data.optString("fromUserId", "")
+                val fromUserName = data.optString("fromUserName", "")
+                if (roomId.isNotEmpty()) listener.onPage(roomId, fromUserId, fromUserName)
             }
         }
     }
@@ -284,5 +304,15 @@ class SignalingClient(
 
     fun pauseConsumer() {
         socket?.emit("pause-consumer")
+    }
+
+    fun pageUser(toDeviceId: String, roomId: String, fromUserId: String, fromUserName: String) {
+        val data = JSONObject().apply {
+            put("toDeviceId", toDeviceId)
+            put("roomId", roomId)
+            put("fromUserId", fromUserId)
+            put("fromUserName", fromUserName)
+        }
+        socket?.emit("page", data)
     }
 }
