@@ -311,7 +311,7 @@ io.on('connection', (socket) => {
       const transport = await router.createWebRtcTransport({
         listenIps: [{
           ip: '0.0.0.0',
-          announcedIp: process.env.ANNOUNCED_IP || '192.168.1.132'
+          announcedIp: process.env.ANNOUNCED_IP || '62.84.190.56'
         }],
         enableUdp: true,
         enableTcp: true,
