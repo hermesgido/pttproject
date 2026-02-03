@@ -83,18 +83,6 @@
       "companyId": "100",
       "name": "DM:6116e30a-b33e-45db-8f51-de4bb49529be:a7225075-3f10-4008-87b3-789f414e6b26",
       "createdAt": 1769992340047
-    },
-    {
-      "id": "54c270f9-0967-4257-8e67-53ad5960995a",
-      "companyId": "100",
-      "name": "DM:a7225075-3f10-4008-87b3-789f414e6b26:f1b1840c-bab6-4ca8-b96f-25dce035ccad",
-      "createdAt": 1769992706250
-    },
-    {
-      "id": "542ecb64-c9f8-4dff-aff6-2d0d28605a48",
-      "companyId": "100",
-      "name": "DM:2812e3f1-db10-4824-b4ae-ac5b35eb0771:f1b1840c-bab6-4ca8-b96f-25dce035ccad",
-      "createdAt": 1770063319090
     }
   ],
   "memberships": [
@@ -135,24 +123,8 @@
       "deviceId": "a7225075-3f10-4008-87b3-789f414e6b26"
     },
     {
-      "channelId": "54c270f9-0967-4257-8e67-53ad5960995a",
-      "deviceId": "a7225075-3f10-4008-87b3-789f414e6b26"
-    },
-    {
-      "channelId": "54c270f9-0967-4257-8e67-53ad5960995a",
-      "deviceId": "f1b1840c-bab6-4ca8-b96f-25dce035ccad"
-    },
-    {
       "channelId": "09a6413e-905a-4855-95da-1f0657801d62",
       "deviceId": "2812e3f1-db10-4824-b4ae-ac5b35eb0771"
-    },
-    {
-      "channelId": "542ecb64-c9f8-4dff-aff6-2d0d28605a48",
-      "deviceId": "2812e3f1-db10-4824-b4ae-ac5b35eb0771"
-    },
-    {
-      "channelId": "542ecb64-c9f8-4dff-aff6-2d0d28605a48",
-      "deviceId": "f1b1840c-bab6-4ca8-b96f-25dce035ccad"
     },
     {
       "channelId": "09a6413e-905a-4855-95da-1f0657801d62",
