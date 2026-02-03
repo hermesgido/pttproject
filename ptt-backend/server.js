@@ -389,7 +389,7 @@ io.on('connection', (socket) => {
       // Grant permission to speaker
       socket.emit('speak-granted');
       
-      // Notify all others in the room
+      // Notify all others in the roomm
       socket.to(roomId).emit('user-speaking', {
         roomId,
         userId,
