@@ -56,6 +56,28 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import kotlin.math.abs
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.animation.core.*
+import androidx.compose.animation.*
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.text.style.TextOverflow
+import java.text.SimpleDateFormat
+import java.util.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusTarget
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Person
+
 
 class MainActivity : ComponentActivity() {
 
@@ -105,6 +127,8 @@ class MainActivity : ComponentActivity() {
     private var recents = mutableStateListOf<RecentItem>()
     private var activeSessionName by mutableStateOf<String?>(null)
     private var activeSessionType by mutableStateOf<String?>(null)
+    private var currentSpeakerId by mutableStateOf<String?>(null)
+    private var talkSegmentIndex by mutableStateOf(1)
 
     // Coroutine scope for UI updates
     private val uiScope = CoroutineScope(Dispatchers.Main)
@@ -221,12 +245,23 @@ class MainActivity : ComponentActivity() {
                         currentSpeaker = currentSpeaker,
                         hasPermission = hasPermission,
                         isConnectedToServer = isConnectedToServer,
+                        connectedUsersCount = connectedUsersCount,
+                        members = connectedUsers.map { uid ->
+                            val c = contacts.find { it.id == uid }
+                            val nm = c?.displayName ?: uid
+                            val online = presenceMap[uid]?.online == true
+                            MemberItem(uid, nm, online, null)
+                        },
+                        currentSpeakerId = currentSpeakerId,
+                        selectedSegment = talkSegmentIndex,
+                        onSelectSegment = { talkSegmentIndex = it },
                         onBack = { endSession() },
                         onPTTPressed = {
                             if (hasPermission && isConnectedToServer && roomId.isNotEmpty()) {
                                 uiScope.launch {
                                     isTransmitting = true
                                     currentSpeaker = "You"
+                                    currentSpeakerId = userId
                                     startTransmitting()
                                     signalingClient.requestSpeak(roomId, userId)
                                 }
@@ -239,6 +274,7 @@ class MainActivity : ComponentActivity() {
                                 if (isTransmitting) {
                                     isTransmitting = false
                                     currentSpeaker = null
+                                    currentSpeakerId = null
                                     stopTransmitting()
                                     signalingClient.stopSpeaking(roomId, userId)
                                 }
@@ -364,12 +400,6 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) {}
         androidMediasoupController.setConsumersEnabled(false)
         signalingClient.pauseConsumer()
-        // webRTCManager.setNoiseGate(
-        //     Constants.WebRTC.USE_NOISE_GATE,
-        //     Constants.WebRTC.NOISE_GATE_RMS_THRESHOLD,
-        //     Constants.WebRTC.NOISE_GATE_ATTACK_MS,
-        //     Constants.WebRTC.NOISE_GATE_RELEASE_MS
-        // )
         webRTCManager.setTransmitState(true)
         try {
             Log.d("PTT", "Started transmitting")
@@ -474,6 +504,7 @@ class MainActivity : ComponentActivity() {
                 Log.d("PTT", "Speak granted, starting transmitting and producing audio")
                 isTransmitting = true
                 currentSpeaker = "You"
+                currentSpeakerId = userId
                 startTransmitting()
                 webRTCManager.getLocalAudioTrack()?.let { track ->
                     Log.d("PTT", "Local audio track ready, calling mediasoup produce")
@@ -488,13 +519,15 @@ class MainActivity : ComponentActivity() {
 
         override fun onUserSpeaking(userId: String, userName: String) {
             uiScope.launch {
-                currentSpeaker = "$userName ($userId)"
+                currentSpeaker = userName
+                currentSpeakerId = userId
             }
         }
 
         override fun onUserStopped(userId: String) {
             uiScope.launch {
                 currentSpeaker = null
+                if (currentSpeakerId == userId) currentSpeakerId = null
             }
         }
 
@@ -530,7 +563,6 @@ class MainActivity : ComponentActivity() {
 
         override fun onIceCandidate(candidate: JSONObject) {
             // Handle ICE candidate from server
-            // TODO: Implement when we add proper WebRTC signaling
         }
 
         override fun onTransportCreated(transportInfo: JSONObject) {
@@ -859,10 +891,11 @@ class MainActivity : ComponentActivity() {
 
     private fun toggleSpeaker() {
         runCatching {
-            val isSpeakerOn = true
+            val isSpeakerOn = audioManager.isSpeakerphoneOn
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             audioManager.setSpeakerphoneOn(!isSpeakerOn)
-            setVoiceCallVolumeFraction(0.9f)
+            setVoiceCallVolumeFraction(if (!isSpeakerOn) 0.9f else 0.6f)
+            showToast(if (!isSpeakerOn) "Speaker ON" else "Speaker OFF")
         }
     }
 
@@ -904,19 +937,15 @@ class MainActivity : ComponentActivity() {
     // WebRTC Listener
     private val webRTCListener = object : WebRTCManager.SignalingListener {
         override fun onLocalDescription(sdp: SessionDescription) {
-            // Send SDP to server
-            // TODO: Implement when we add proper WebRTC signaling
             Log.d("WebRTC", "Local description: ${sdp.type}")
         }
 
         override fun onIceCandidate(candidate: IceCandidate) {
-            // Send ICE candidate to server
             val candidateJson = JSONObject().apply {
                 put("candidate", candidate.sdp)
                 put("sdpMid", candidate.sdpMid)
                 put("sdpMLineIndex", candidate.sdpMLineIndex)
             }
-            // TODO: Send to server via signaling client
             Log.d("WebRTC", "ICE candidate: ${candidate.sdp}")
         }
 
@@ -954,12 +983,11 @@ class MainActivity : ComponentActivity() {
                             currentSpeaker = "You"
                             startTransmitting()
                             signalingClient.requestSpeak(roomId, userId)
-                            showToast("PTT Pressed (Volume Down)")
                         }
                     }
                     true
                 } else {
-                    showToast("Join a contact or channel first")
+                    if (roomId.isEmpty()) showToast("Join a contact or channel first")
                     false
                 }
             }
@@ -985,7 +1013,6 @@ class MainActivity : ComponentActivity() {
                             currentSpeaker = null
                             stopTransmitting()
                             signalingClient.stopSpeaking(roomId, userId)
-                            showToast("PTT Released")
                         }
                     }
                     true
@@ -1014,6 +1041,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// Modern UI Components - Zello-inspired
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainTabbedScreen(
@@ -1033,36 +1062,136 @@ fun MainTabbedScreen(
     onRecentClick: (RecentItem) -> Unit,
     onDeleteRecent: (RecentItem) -> Unit
 ) {
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            TopAppBar(
-                title = { Text("PTT") },
-                actions = {
+            // Modern Top Bar
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shadowElevation = 4.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        text = "⋮",
-                        modifier = Modifier
-                            .padding(8.dp)
-                            .clickable { onToggleSettingsMenu() }
+                        text = "PTT Radio",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
-                    DropdownMenu(expanded = showSettingsMenu, onDismissRequest = { onToggleSettingsMenu() }) {
-                        DropdownMenuItem(text = { Text("Account: " + accountDisplayName) }, onClick = {}, enabled = false)
-                        DropdownMenuItem(text = { Text("Logout") }, onClick = { onToggleSettingsMenu(); onLogout() })
-                        DropdownMenuItem(text = { Text("Toggle Speaker") }, onClick = { onToggleSettingsMenu(); onToggleSpeaker() })
+
+                    Box {
+                        IconButton(onClick = onToggleSettingsMenu) {
+                            Text(
+                                text = "⋮",
+                                style = MaterialTheme.typography.headlineMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showSettingsMenu,
+                            onDismissRequest = onToggleSettingsMenu
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(
+                                            text = accountDisplayName,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "Logged in",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.outline
+                                        )
+                                    }
+                                },
+                                onClick = {},
+                                enabled = false
+                            )
+                            Divider()
+                            DropdownMenuItem(
+                                text = { Text("Toggle Speaker") },
+                                onClick = {
+                                    onToggleSettingsMenu()
+                                    onToggleSpeaker()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Logout") },
+                                onClick = {
+                                    onToggleSettingsMenu()
+                                    onLogout()
+                                }
+                            )
+                        }
                     }
                 }
-            )
-
-            TabRow(selectedTabIndex = selectedTabIndex) {
-                Tab(selected = selectedTabIndex == 0, onClick = { onSelectTab(0) }, text = { Text("Recents") })
-                Tab(selected = selectedTabIndex == 1, onClick = { onSelectTab(1) }, text = { Text("Contacts") })
-                Tab(selected = selectedTabIndex == 2, onClick = { onSelectTab(2) }, text = { Text("Channels") })
             }
 
+            // Modern Tab Bar
+            TabRow(
+                selectedTabIndex = selectedTabIndex,
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.primary
+            ) {
+                Tab(
+                    selected = selectedTabIndex == 0,
+                    onClick = { onSelectTab(0) },
+                    text = {
+                        Text(
+                            text = "Recents",
+                            fontWeight = if (selectedTabIndex == 0) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                )
+                Tab(
+                    selected = selectedTabIndex == 1,
+                    onClick = { onSelectTab(1) },
+                    text = {
+                        Text(
+                            text = "Contacts",
+                            fontWeight = if (selectedTabIndex == 1) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                )
+                Tab(
+                    selected = selectedTabIndex == 2,
+                    onClick = { onSelectTab(2) },
+                    text = {
+                        Text(
+                            text = "Channels",
+                            fontWeight = if (selectedTabIndex == 2) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
+                )
+            }
+
+            // Tab Content
             Box(modifier = Modifier.weight(1f)) {
                 when (selectedTabIndex) {
-                    0 -> RecentsTab(recents = recents, onRecentClick = onRecentClick, onDeleteRecent = onDeleteRecent)
-                    1 -> ContactsTab(contacts = contacts, presenceMap = presenceMap, onContactClick = onContactClick)
-                    else -> ChannelsTab(channels = channels, onChannelClick = onChannelClick)
+                    0 -> RecentsTab(
+                        recents = recents,
+                        onRecentClick = onRecentClick,
+                        onDeleteRecent = onDeleteRecent
+                    )
+                    1 -> ContactsTab(
+                        contacts = contacts,
+                        presenceMap = presenceMap,
+                        onContactClick = onContactClick
+                    )
+                    else -> ChannelsTab(
+                        channels = channels,
+                        onChannelClick = onChannelClick
+                    )
                 }
             }
         }
@@ -1077,41 +1206,111 @@ fun TalkScreen(
     currentSpeaker: String?,
     hasPermission: Boolean,
     isConnectedToServer: Boolean,
+    connectedUsersCount: Int,
+    members: List<MemberItem>,
+    currentSpeakerId: String?,
+    selectedSegment: Int,
+    onSelectSegment: (Int) -> Unit,
     onBack: () -> Unit,
     onPTTPressed: () -> Unit,
     onPTTReleased: () -> Unit
 ) {
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            TopAppBar(
-                navigationIcon = {
-                    Text(
-                        text = "←",
-                        modifier = Modifier
-                            .padding(8.dp)
-                            .clickable { onBack() }
-                    )
-                },
-                title = { Text(title) }
-            )
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    StatusRow(
-                        isTransmitting = isTransmitting,
-                        currentSpeaker = currentSpeaker,
-                        hasPermission = hasPermission,
-                        isConnected = isConnectedToServer,
-                        userId = "",
-                        connectedCount = 0
-                    )
-                    Spacer(modifier = Modifier.height(24.dp))
-                    PTTButton(
-                        isPressed = isTransmitting,
-                        enabled = hasPermission && isConnectedToServer,
-                        connected = isConnectedToServer,
-                        onPress = onPTTPressed,
-                        onRelease = onPTTReleased
-                    )
+            // Top Bar with Back Button
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shadowElevation = 4.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) {
+                        Text(
+                            text = "←",
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "$connectedUsersCount online",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                            )
+                            if (isConnectedToServer) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF4CAF50))
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Segmented control
+            TabRow(
+                selectedTabIndex = selectedSegment,
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.primary
+            ) {
+                Tab(selected = selectedSegment == 0, onClick = { onSelectSegment(0) }, icon = { Icon(Icons.Filled.Mic, contentDescription = null) })
+                Tab(selected = selectedSegment == 1, onClick = { onSelectSegment(1) }, icon = { Icon(Icons.Filled.Person, contentDescription = null) })
+                Tab(selected = selectedSegment == 2, onClick = { onSelectSegment(2) }, icon = { Icon(Icons.Filled.Chat, contentDescription = null) })
+                Tab(selected = selectedSegment == 3, onClick = { onSelectSegment(3) }, icon = { Icon(Icons.Filled.Map, contentDescription = null) })
+            }
+
+            // Main Content Area
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                when (selectedSegment) {
+                    0 -> Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(24.dp)
+                    ) {
+                        StatusCard(
+                            isTransmitting = isTransmitting,
+                            currentSpeaker = currentSpeaker,
+                            hasPermission = hasPermission,
+                            isConnected = isConnectedToServer
+                        )
+                        ModernPTTButton(
+                            isPressed = isTransmitting,
+                            enabled = hasPermission && isConnectedToServer,
+                            connected = isConnectedToServer,
+                            onPress = onPTTPressed,
+                            onRelease = onPTTReleased
+                        )
+                    }
+                    1 -> MembersList(members = members, activeSpeakerId = currentSpeakerId)
+                    2 -> ChatPane()
+                    else -> MapPane()
                 }
             }
         }
@@ -1119,125 +1318,207 @@ fun TalkScreen(
 }
 
 @Composable
-fun StatusRow(
+fun MembersList(members: List<MemberItem>, activeSpeakerId: String?) {
+    if (members.isEmpty()) {
+        EmptyState(icon = "👥", message = "No members", subtitle = "Waiting for participants")
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(vertical = 8.dp)
+        ) {
+            items(members, key = { it.id }) { m ->
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(12.dp)),
+                    color = MaterialTheme.colorScheme.surface,
+                    shadowElevation = 2.dp
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer)
+                                    .border(
+                                        width = if (m.id == activeSpeakerId) 3.dp else 0.dp,
+                                        color = if (m.id == activeSpeakerId) Color(0xFF4CAF50) else Color.Transparent,
+                                        shape = CircleShape
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = m.name.firstOrNull()?.uppercase() ?: "?",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = m.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(if (m.online) Color(0xFF4CAF50) else Color(0xFF9E9E9E))
+                                    )
+                                    Text(
+                                        text = if (m.online) "Online" else "Offline",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (m.online) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline
+                                    )
+                                    if (m.distanceKm != null) {
+                                        Text(
+                                            text = "•",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.outline
+                                        )
+                                        Text(
+                                            text = "${m.distanceKm} km",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.outline
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (m.id == activeSpeakerId) {
+                            Icon(Icons.Filled.Mic, contentDescription = null, tint = Color(0xFF4CAF50))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ChatPane() {
+    EmptyState(icon = "💬", message = "Chats", subtitle = "Messaging coming soon")
+}
+
+@Composable
+fun MapPane() {
+    EmptyState(icon = "🗺️", message = "Live map", subtitle = "Map integration pending")
+}
+
+@Composable
+fun StatusCard(
     isTransmitting: Boolean,
     currentSpeaker: String?,
     hasPermission: Boolean,
-    isConnected: Boolean,
-    userId: String,
-    connectedCount: Int
+    isConnected: Boolean
 ) {
-    Row(
+    Card(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+            .fillMaxWidth(0.85f)
+            .shadow(4.dp, RoundedCornerShape(16.dp)),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isTransmitting)
+                Color(0xFFFFEBEE)
+            else
+                MaterialTheme.colorScheme.surfaceVariant
+        )
     ) {
-        Text(text = if (isTransmitting) "TRANSMITTING" else "LISTENING", color = if (isTransmitting) Color.Red else Color.Green)
-        Text(text = currentSpeaker ?: "Idle")
-        Text(text = if (hasPermission) "Mic ✓" else "Mic ✗", color = if (hasPermission) Color.Green else Color.Red)
-        Text(text = if (isConnected) "Net ✓" else "Net ✗", color = if (isConnected) Color.Green else Color.Red)
-        Text(text = userId)
-        Text(text = connectedCount.toString())
-    }
-}
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Main Status
+            Text(
+                text = if (isTransmitting) "TRANSMITTING" else "LISTENING",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = if (isTransmitting) Color(0xFFD32F2F) else Color(0xFF388E3C)
+            )
 
-@Composable
-fun RecentsTab(recents: List<RecentItem>, onRecentClick: (RecentItem) -> Unit, onDeleteRecent: (RecentItem) -> Unit) {
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        items(recents, key = { it.type + ":" + it.refId }) { r ->
-            val density = LocalContext.current.resources.displayMetrics.density
-            val thresholdPx = 120f * density
-            var offsetX by remember { mutableStateOf(0f) }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Red),
-                    contentAlignment = Alignment.CenterEnd
-                ) {
-                    Text("Delete", color = Color.White, modifier = Modifier.padding(16.dp))
-                }
-
+            // Current Speaker
+            if (currentSpeaker != null) {
                 Row(
-                    modifier = Modifier
-                        .offset { IntOffset(offsetX.roundToInt(), 0) }
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.surface)
-                        .pointerInput(Unit) {
-                            detectHorizontalDragGestures(
-                                onHorizontalDrag = { _, dragAmount ->
-                                    offsetX += dragAmount
-                                },
-                                onDragEnd = {
-                                    if (abs(offsetX) > thresholdPx) {
-                                        onDeleteRecent(r)
-                                    }
-                                    offsetX = 0f
-                                }
-                            )
-                        }
-                        .clickable { onRecentClick(r) }
-                        .padding(horizontal = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = r.name)
-                        Text(text = if (r.type == "contact") "Contact" else "Channel")
-                    }
-                    Text(text = "Swipe to delete")
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFD32F2F))
+                    )
+                    Text(
+                        text = currentSpeaker,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
+                    )
                 }
+            } else {
+                Text(
+                    text = "Channel idle",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.outline
+                )
             }
-        }
-    }
-}
 
-@Composable
-fun ContactsTab(contacts: List<DeviceItem>, presenceMap: Map<String, PresenceInfo>, onContactClick: (DeviceItem) -> Unit) {
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        items(contacts) { d ->
-            val online = presenceMap[d.id]?.online == true
+            Divider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // System Status Icons
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onContactClick(d) }
-                    .padding(12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                Text(text = d.displayName)
-                Text(text = if (online) "Online" else "Offline", color = if (online) Color.Green else Color.Red)
+                StatusIcon(
+                    label = "Mic",
+                    isActive = hasPermission,
+                    icon = if (hasPermission) "🎤" else "🚫"
+                )
+                StatusIcon(
+                    label = "Network",
+                    isActive = isConnected,
+                    icon = if (isConnected) "📡" else "⚠️"
+                )
             }
         }
     }
 }
 
 @Composable
-fun ChannelsTab(channels: List<ChannelItem>, onChannelClick: (ChannelItem) -> Unit) {
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        items(channels) { c ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onChannelClick(c) }
-                    .padding(12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(text = c.name)
-                Text(text = c.online.toString() + "/" + c.members.toString())
-            }
-        }
+fun StatusIcon(label: String, isActive: Boolean, icon: String) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = icon,
+            style = MaterialTheme.typography.titleLarge
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (isActive) Color(0xFF388E3C) else Color(0xFFD32F2F),
+            fontWeight = FontWeight.Medium
+        )
     }
 }
 
 @Composable
-fun PTTButton(
+fun ModernPTTButton(
     isPressed: Boolean,
     enabled: Boolean,
     connected: Boolean,
@@ -1245,10 +1526,53 @@ fun PTTButton(
     onRelease: () -> Unit
 ) {
     var isButtonPressed by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
-    Surface(
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse"
+    )
+
+    val buttonColor = when {
+        !enabled -> Color(0xFF9E9E9E)
+        isPressed -> Color(0xFFD32F2F)
+        else -> Color(0xFF4CAF50)
+    }
+
+    Box(
         modifier = Modifier
-            .size(200.dp)
+            .size(if (isPressed) 220.dp else 200.dp)
+            .focusRequester(focusRequester)
+            .focusTarget()
+            .onKeyEvent {
+                if (!enabled) return@onKeyEvent false
+                val action = it.nativeKeyEvent.action
+                val keyCode = it.nativeKeyEvent.keyCode
+                if (action == android.view.KeyEvent.ACTION_DOWN &&
+                    (keyCode == android.view.KeyEvent.KEYCODE_ENTER || keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER || keyCode == android.view.KeyEvent.KEYCODE_SPACE)) {
+                    if (!isButtonPressed) {
+                        isButtonPressed = true
+                        onPress()
+                    }
+                    true
+                } else if (action == android.view.KeyEvent.ACTION_UP &&
+                    (keyCode == android.view.KeyEvent.KEYCODE_ENTER || keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER || keyCode == android.view.KeyEvent.KEYCODE_SPACE)) {
+                    if (isButtonPressed) {
+                        isButtonPressed = false
+                        onRelease()
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
             .pointerInput(Unit) {
                 detectTapGestures(
                     onPress = {
@@ -1262,30 +1586,438 @@ fun PTTButton(
                     }
                 )
             },
-        color = when {
-            !enabled -> Color.Gray
-            isPressed -> Color.Red
-            else -> Color.Green
-        },
-        shape = MaterialTheme.shapes.extraLarge,
-        tonalElevation = if (isButtonPressed) 8.dp else 4.dp,
-        shadowElevation = if (isButtonPressed) 8.dp else 4.dp
+        contentAlignment = Alignment.Center
     ) {
-        Box(
+        // Outer glow effect when transmitting
+        if (isPressed) {
+            Box(
+                modifier = Modifier
+                    .size(240.dp * pulseScale)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFFD32F2F).copy(alpha = 0.3f),
+                                Color.Transparent
+                            )
+                        )
+                    )
+            )
+        }
+
+        // Main button
+        Surface(
             modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
+            color = buttonColor,
+            shape = CircleShape,
+            shadowElevation = if (isButtonPressed) 12.dp else 8.dp
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = if (!enabled) if (!connected) "NOT CONNECTED" else "NEEDS PERMISSION"
-                    else if (isPressed) "SPEAKING"
-                    else "PUSH TO TALK",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = Color.White
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = when {
+                            !enabled -> if (!connected) "🔌" else "🚫"
+                            isPressed -> "📢"
+                            else -> "🎙️"
+                        },
+                        style = MaterialTheme.typography.displayLarge
+                    )
+                    Text(
+                        text = when {
+                            !enabled -> if (!connected) "NOT CONNECTED" else "NO PERMISSION"
+                            isPressed -> "SPEAKING"
+                            else -> "PUSH TO TALK"
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RecentsTab(
+    recents: List<RecentItem>,
+    onRecentClick: (RecentItem) -> Unit,
+    onDeleteRecent: (RecentItem) -> Unit
+) {
+    if (recents.isEmpty()) {
+        EmptyState(
+            icon = "🕐",
+            message = "No recent conversations",
+            subtitle = "Start a conversation with a contact or channel"
+        )
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(vertical = 8.dp)
+        ) {
+            items(recents, key = { it.type + ":" + it.refId }) { item ->
+                SwipeableRecentItem(
+                    item = item,
+                    onClick = { onRecentClick(item) },
+                    onDelete = { onDeleteRecent(item) }
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun SwipeableRecentItem(
+    item: RecentItem,
+    onClick: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val density = LocalContext.current.resources.displayMetrics.density
+    val thresholdPx = 120f * density
+    var offsetX by remember { mutableStateOf(0f) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        // Delete background
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp)
+                .clip(RoundedCornerShape(12.dp)),
+            color = Color(0xFFD32F2F)
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.CenterEnd
+            ) {
+                Text(
+                    text = "Delete",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(end = 24.dp)
+                )
+            }
+        }
+
+        // Swipeable content
+        Surface(
+            modifier = Modifier
+                .offset { IntOffset(offsetX.roundToInt(), 0) }
+                .fillMaxWidth()
+                .height(72.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { _, dragAmount ->
+                            offsetX = (offsetX + dragAmount).coerceIn(-thresholdPx * 2, 0f)
+                        },
+                        onDragEnd = {
+                            if (offsetX < -thresholdPx) {
+                                onDelete()
+                            }
+                            offsetX = 0f
+                        }
+                    )
+                }
+                .clickable(onClick = onClick),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 2.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    // Icon
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (item.type == "contact")
+                                    MaterialTheme.colorScheme.primaryContainer
+                                else
+                                    MaterialTheme.colorScheme.secondaryContainer
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (item.type == "contact") "👤" else "📻",
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = item.name,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = if (item.type == "contact") "Direct" else "Channel",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                    }
+                }
+
+                Text(
+                    text = formatTime(item.ts),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ContactsTab(
+    contacts: List<DeviceItem>,
+    presenceMap: Map<String, PresenceInfo>,
+    onContactClick: (DeviceItem) -> Unit
+) {
+    if (contacts.isEmpty()) {
+        EmptyState(
+            icon = "👥",
+            message = "No contacts available",
+            subtitle = "Contacts will appear here when added"
+        )
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(vertical = 8.dp)
+        ) {
+            items(contacts) { contact ->
+                ContactListItem(
+                    contact = contact,
+                    isOnline = presenceMap[contact.id]?.online == true,
+                    onClick = { onContactClick(contact) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ContactListItem(
+    contact: DeviceItem,
+    isOnline: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Avatar with status
+            Box {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = contact.displayName.firstOrNull()?.uppercase() ?: "?",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+                // Online status indicator
+                Box(
+                    modifier = Modifier
+                        .size(14.dp)
+                        .align(Alignment.BottomEnd)
+                        .clip(CircleShape)
+                        .background(if (isOnline) Color(0xFF4CAF50) else Color(0xFF9E9E9E))
+                        .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                )
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = contact.displayName,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = if (isOnline) "Online" else "Offline",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (isOnline) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline
+                )
+            }
+
+            Text(
+                text = "→",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.outline
+            )
+        }
+    }
+}
+
+@Composable
+fun ChannelsTab(
+    channels: List<ChannelItem>,
+    onChannelClick: (ChannelItem) -> Unit
+) {
+    if (channels.isEmpty()) {
+        EmptyState(
+            icon = "📻",
+            message = "No channels available",
+            subtitle = "Join a channel to start communicating"
+        )
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(vertical = 8.dp)
+        ) {
+            items(channels) { channel ->
+                ChannelListItem(
+                    channel = channel,
+                    onClick = { onChannelClick(channel) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ChannelListItem(
+    channel: ChannelItem,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Channel icon
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.secondaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "📻",
+                    style = MaterialTheme.typography.titleLarge
+                )
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = channel.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${channel.online} online",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF4CAF50)
+                    )
+                    Text(
+                        text = "•",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    Text(
+                        text = "${channel.members} members",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
+
+            Text(
+                text = "→",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.outline
+            )
+        }
+    }
+}
+
+@Composable
+fun EmptyState(icon: String, message: String, subtitle: String) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.padding(32.dp)
+        ) {
+            Text(
+                text = icon,
+                style = MaterialTheme.typography.displayLarge
+            )
+            Text(
+                text = message,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.outline,
+                textAlign = TextAlign.Center
+            )
         }
     }
 }
@@ -1305,6 +2037,7 @@ fun LoginScreen(
     onLogin: () -> Unit
 ) {
     val scrollState = rememberScrollState()
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -1313,67 +2046,158 @@ fun LoginScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            Text(
-                text = "Device Login",
-                style = MaterialTheme.typography.headlineLarge,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            Surface(
-                color = if (isConnected) Color.Green.copy(alpha = 0.2f) else Color.Red.copy(alpha = 0.2f),
-                shape = MaterialTheme.shapes.small
+            // Logo/Icon
+            Box(
+                modifier = Modifier
+                    .size(120.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = if (isConnected) "✓ Connected" else "✗ Not Connected",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isConnected) Color.Green else Color.Red,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                    text = "📻",
+                    style = MaterialTheme.typography.displayLarge
                 )
             }
-            Spacer(modifier = Modifier.height(16.dp))
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
+                text = "PTT Radio",
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Connection Status
+            Surface(
+                color = if (isConnected)
+                    Color(0xFF4CAF50).copy(alpha = 0.2f)
+                else
+                    Color(0xFFD32F2F).copy(alpha = 0.2f),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(if (isConnected) Color(0xFF4CAF50) else Color(0xFFD32F2F))
+                    )
+                    Text(
+                        text = if (isConnected) "Connected" else "Not Connected",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isConnected) Color(0xFF4CAF50) else Color(0xFFD32F2F)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // Input Fields
             OutlinedTextField(
                 value = companyId,
                 onValueChange = onCompanyIdChange,
                 label = { Text("Company ID") },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
             )
-            Spacer(modifier = Modifier.height(8.dp))
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             OutlinedTextField(
                 value = accountNumber,
                 onValueChange = onAccountNumberChange,
                 label = { Text("Account Number") },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
             )
-            Spacer(modifier = Modifier.height(8.dp))
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             OutlinedTextField(
                 value = password,
                 onValueChange = onPasswordChange,
                 label = { Text("Password") },
                 singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
-                visualTransformation = PasswordVisualTransformation()
+                shape = RoundedCornerShape(12.dp)
             )
+
+            // Error Message
             if (!errorMessage.isNullOrEmpty()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = errorMessage ?: "",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall
-                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Surface(
+                    color = Color(0xFFD32F2F).copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = errorMessage,
+                        color = Color(0xFFD32F2F),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
             }
-            Spacer(modifier = Modifier.height(12.dp))
-            Button(onClick = onLogin, enabled = isConnected && !isLoggingIn) {
-                Text(if (isLoggingIn) "Logging in…" else "Login")
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Login Button
+            Button(
+                onClick = onLogin,
+                enabled = isConnected && !isLoggingIn,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                if (isLoggingIn) {
+                    Text("Logging in...")
+                } else {
+                    Text(
+                        text = "Login",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
 }
 
+// Helper function to format timestamps
+fun formatTime(timestamp: Long): String {
+    val now = System.currentTimeMillis()
+    val diff = now - timestamp
+
+    return when {
+        diff < 60000 -> "Just now"
+        diff < 3600000 -> "${diff / 60000}m ago"
+        diff < 86400000 -> "${diff / 3600000}h ago"
+        diff < 604800000 -> "${diff / 86400000}d ago"
+        else -> {
+            val sdf = SimpleDateFormat("MMM dd", Locale.getDefault())
+            sdf.format(Date(timestamp))
+        }
+    }
+}
+
+// Data classes
 data class DeviceItem(val id: String, val displayName: String, val accountNumber: String)
 data class ChannelItem(val id: String, val name: String, val members: Int, val online: Int)
 data class PresenceInfo(val online: Boolean, val lastSeen: Long?)
 data class RecentItem(val type: String, val refId: String, val name: String, val ts: Long)
+data class MemberItem(val id: String, val name: String, val online: Boolean, val distanceKm: Long?)
