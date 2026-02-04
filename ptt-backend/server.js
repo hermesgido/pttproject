@@ -353,9 +353,23 @@ io.on('connection', (socket) => {
       const speakerInfo = room.getSpeakerInfo();
       if (speakerInfo) {
         socket.emit('user-speaking', {
+          roomId,
           userId: speakerInfo.id,
           userName: speakerInfo.name
         });
+
+        const speakerSocketId = room.currentSpeaker;
+        if (speakerSocketId) {
+          const sp = peers.get(speakerSocketId);
+          if (sp && sp.producer) {
+            socket.emit('new-producer', {
+              roomId,
+              producerId: sp.producer.id,
+              userId: sp.userId,
+              userName: sp.userName
+            });
+          }
+        }
       }
 
       // Join socket room for broadcasting
