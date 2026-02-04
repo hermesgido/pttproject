@@ -10,6 +10,8 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import android.app.Service
 import android.os.IBinder
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import com.ropex.pptapp.mediasoup.AndroidMediasoupController
 import com.ropex.pptapp.signaling.SignalingClient
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +33,8 @@ class AlwaysOnPTTService : Service() {
     private lateinit var mediasoup: AndroidMediasoupController
     private lateinit var httpClient: OkHttpClient
     private lateinit var audioManager: AudioManager
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var hasAudioFocus: Boolean = false
 
     private var authToken: String? = null
     private var userId: String = ""
@@ -39,7 +43,6 @@ class AlwaysOnPTTService : Service() {
     private var companyId: String? = null
 
     private var recvTransportId: String? = null
-    private var pendingProducerId: String? = null
     private var pendingRecvTransportInfo: JSONObject? = null
 
     override fun onCreate() {
@@ -65,9 +68,11 @@ class AlwaysOnPTTService : Service() {
 
     private fun configureAudioForReceiving() {
         runCatching {
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager.mode = AudioManager.MODE_NORMAL
             audioManager.setSpeakerphoneOn(true)
+            setMusicVolumeFraction(0.95f)
             setVoiceCallVolumeFraction(0.9f)
+            requestAudioFocus()
         }
     }
 
@@ -76,6 +81,48 @@ class AlwaysOnPTTService : Service() {
             val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
             val vol = kotlin.math.max(1, kotlin.math.min(maxVolume, (maxVolume * f).toInt()))
             audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, vol, 0)
+        } catch (_: Exception) {}
+    }
+
+    private fun setMusicVolumeFraction(f: Float) {
+        try {
+            val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            val vol = kotlin.math.max(1, kotlin.math.min(maxVolume, (maxVolume * f).toInt()))
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, vol, 0)
+        } catch (_: Exception) {}
+    }
+
+    private fun requestAudioFocus() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val attrs = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                val afr = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                    .setAudioAttributes(attrs)
+                    .setOnAudioFocusChangeListener { }
+                    .build()
+                val res = audioManager.requestAudioFocus(afr)
+                hasAudioFocus = res == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                audioFocusRequest = afr
+            } else {
+                val res = audioManager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
+                hasAudioFocus = res == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun abandonAudioFocus() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val afr = audioFocusRequest
+                if (afr != null) audioManager.abandonAudioFocusRequest(afr)
+                audioFocusRequest = null
+            } else {
+                audioManager.abandonAudioFocus(null)
+            }
+            hasAudioFocus = false
         } catch (_: Exception) {}
     }
 
@@ -104,7 +151,10 @@ class AlwaysOnPTTService : Service() {
         override fun onAuthOk(deviceId: String, companyId: String) {
             this@AlwaysOnPTTService.deviceId = deviceId
             this@AlwaysOnPTTService.companyId = companyId
-            scope.launch { autoJoinMemberChannels(companyId, deviceId) }
+            scope.launch {
+                autoEnsureMemberships(companyId, deviceId)
+                signalingClient.createTransport("recv")
+            }
         }
 
         override fun onAuthError(error: String) {}
@@ -118,26 +168,21 @@ class AlwaysOnPTTService : Service() {
 
         override fun onTransportCreated(transportInfo: JSONObject) {
             val direction = transportInfo.optString("direction", "")
-            if (recvTransportId == null && (direction == "recv" || direction.isEmpty())) {
+            if (recvTransportId == null && direction == "recv") {
                 if (!mediasoup.isDeviceLoaded()) {
                     pendingRecvTransportInfo = transportInfo
                     return
                 }
                 recvTransportId = transportInfo.getString("id")
                 mediasoup.createRecvTransport(transportInfo)
-                val pid = pendingProducerId
-                val caps = mediasoup.getDeviceRtpCapabilities()
-                val tId = recvTransportId
-                if (pid != null && caps != null && tId != null) {
-                    signalingClient.consumeAudio(pid, caps, tId)
-                    pendingProducerId = null
-                }
             }
         }
 
         override fun onRtpCapabilities(data: JSONObject) {
             if (!mediasoup.isDeviceLoaded()) {
                 mediasoup.loadDevice(data)
+                val caps = mediasoup.getDeviceRtpCapabilities()
+                if (caps != null) signalingClient.sendClientRtpCaps(caps)
             }
             val info = pendingRecvTransportInfo
             if (recvTransportId == null && info != null) {
@@ -145,28 +190,13 @@ class AlwaysOnPTTService : Service() {
                 mediasoup.createRecvTransport(info)
                 pendingRecvTransportInfo = null
             }
-            val pid = pendingProducerId
-            val tId = recvTransportId
-            val caps = mediasoup.getDeviceRtpCapabilities()
-            if (pid != null && caps != null && tId != null) {
-                signalingClient.consumeAudio(pid, caps, tId)
-                pendingProducerId = null
-            }
         }
 
-        override fun onNewProducerInRoom(roomId: String, data: JSONObject) {
-            val producerId = data.optString("producerId")
-            val caps = mediasoup.getDeviceRtpCapabilities()
-            val tId = recvTransportId
-            if (producerId.isNotEmpty() && caps != null && tId != null) {
-                signalingClient.consumeAudio(producerId, caps, tId)
-            } else if (producerId.isNotEmpty()) {
-                pendingProducerId = producerId
-            }
-        }
+        override fun onNewProducerInRoom(roomId: String, data: JSONObject) {}
 
         override fun onConsumerCreated(data: JSONObject) {
-            // Resume playback on incoming audio
+            requestAudioFocus()
+            mediasoup.onConsumerCreated(data)
             signalingClient.resumeConsumer()
             mediasoup.setConsumersEnabled(true)
         }
@@ -174,6 +204,7 @@ class AlwaysOnPTTService : Service() {
         override fun onUserStoppedInRoom(roomId: String, userId: String) {
             // Pause when speech ends
             mediasoup.setConsumersEnabled(false)
+            abandonAudioFocus()
         }
 
         override fun onUsersList(users: JSONArray) {}
@@ -191,21 +222,24 @@ class AlwaysOnPTTService : Service() {
                 val did = deviceId ?: return@launch
                 ensureMembership(roomId, did)
                 signalingClient.joinChannel(roomId, userId, userName)
+                runCatching {
+                    val i = Intent(this@AlwaysOnPTTService, MainActivity::class.java)
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    i.putExtra("open_room_id", roomId)
+                    i.putExtra("open_room_name", fromUserName)
+                    i.putExtra("open_room_type", "contact")
+                    startActivity(i)
+                }
             }
         }
         override fun onNewProducer(data: JSONObject) {}
     }
 
-    private suspend fun autoJoinMemberChannels(companyId: String, deviceId: String) {
+    private suspend fun autoEnsureMemberships(companyId: String, deviceId: String) {
         val channels = fetchChannels(companyId)
         channels.forEach { ch ->
             val cid = ch.optString("id")
             ensureMembership(cid, deviceId)
-            val prefs = getSharedPreferences("pptapp", Context.MODE_PRIVATE)
-            val active = prefs.getString("active_room_id", null)
-            if (active == null || active != cid) {
-                signalingClient.joinChannel(cid, userId, userName)
-            }
         }
     }
 
@@ -268,6 +302,7 @@ class AlwaysOnPTTService : Service() {
         super.onDestroy()
         runCatching {
             mediasoup.setConsumersEnabled(false)
+            abandonAudioFocus()
         }
     }
 

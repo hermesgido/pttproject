@@ -21,6 +21,7 @@ class AndroidMediasoupController(
     private var recvTransport: RecvTransport? = null
     private var audioProducer: Producer? = null
     private val consumers = mutableListOf<Consumer>()
+    private val consumedProducerIds = mutableSetOf<String>()
     private var pendingTrack: AudioTrack? = null
 
     fun initialize(context: Context) {
@@ -111,9 +112,13 @@ class AndroidMediasoupController(
         val producerId = data.getString("producerId")
         val kind = data.getString("kind")
         val rtpParameters = data.getJSONObject("rtpParameters").toString()
+        if (consumedProducerIds.contains(producerId)) {
+            return
+        }
         val consumer = recvTransport?.consume({ }, id, producerId, kind, rtpParameters, "{}")
         if (consumer != null) {
             consumers.add(consumer)
+            consumedProducerIds.add(producerId)
             val track = consumer.track
             if (track is AudioTrack) {
                 track.setEnabled(true)
@@ -146,6 +151,7 @@ class AndroidMediasoupController(
             try { c.close() } catch (_: Throwable) {}
         }
         consumers.clear()
+        consumedProducerIds.clear()
         try { sendTransport?.close() } catch (_: Throwable) {}
         sendTransport = null
         try { recvTransport?.close() } catch (_: Throwable) {}

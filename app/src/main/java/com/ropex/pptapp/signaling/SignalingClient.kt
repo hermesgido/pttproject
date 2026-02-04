@@ -298,6 +298,13 @@ class SignalingClient(
         socket?.emit("consume-audio", data)
     }
 
+    fun sendClientRtpCaps(rtpCapabilities: JSONObject) {
+        val data = JSONObject().apply {
+            put("rtpCapabilities", rtpCapabilities)
+        }
+        socket?.emit("client-rtp-caps", data)
+    }
+
     fun resumeConsumer() {
         socket?.emit("resume-consumer")
     }

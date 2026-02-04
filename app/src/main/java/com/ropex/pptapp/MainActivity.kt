@@ -299,6 +299,28 @@ class MainActivity : ComponentActivity() {
         } else {
             requestAudioPermission()
         }
+
+        handleOpenFromIntent(intent)
+    }
+
+    override fun onNewIntent(intent: android.content.Intent?) {
+        super.onNewIntent(intent)
+        if (intent != null) handleOpenFromIntent(intent)
+    }
+
+    private fun handleOpenFromIntent(intent: android.content.Intent) {
+        val rid = intent.getStringExtra("open_room_id") ?: return
+        val rname = intent.getStringExtra("open_room_name") ?: "Session"
+        val rtype = intent.getStringExtra("open_room_type") ?: "channel"
+        uiScope.launch {
+            roomId = rid
+            activeSessionName = rname
+            activeSessionType = rtype
+            runCatching {
+                val prefs = getSharedPreferences("pptapp", MODE_PRIVATE)
+                prefs.edit().putString("active_room_id", rid).apply()
+            }
+        }
     }
 
     private fun initializeWebRTC() {

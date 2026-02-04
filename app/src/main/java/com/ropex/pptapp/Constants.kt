@@ -5,7 +5,7 @@ object Constants {
 
     // Server Configuration
 //    const val SERVER_URL = "https://smilies-judicial-corrected-internet.trycloudflare.com"
-    const val SERVER_URL = "http://62.84.190.56"
+    const val SERVER_URL = "https://ptt.ropex.co.tz"
 
 
     // For testing on same device as server:
