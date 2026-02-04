@@ -23,6 +23,9 @@ const io = new Server(server, {
   allowEIO3: true
 });
 
+// Public IP announced to remote clients for ICE transport candidates
+const ANNOUNCED_IP = process.env.ANNOUNCED_IP || '62.84.190.56';
+
 // Store active rooms and users
 const rooms = new Map(); // roomId -> PTTRoom
 const peers = new Map(); // socket.id -> { roomId, transport, producer, consumer, userId, userName, deviceId, companyId, transports }
@@ -311,7 +314,7 @@ io.on('connection', (socket) => {
       const transport = await router.createWebRtcTransport({
         listenIps: [{
           ip: '0.0.0.0',
-          announcedIp: process.env.ANNOUNCED_IP || '62.84.190.56'
+          announcedIp: ANNOUNCED_IP
         }],
         enableUdp: true,
         enableTcp: true,
@@ -565,7 +568,7 @@ io.on('connection', (socket) => {
       const transport = await router.createWebRtcTransport({
         listenIps: [{
           ip: '0.0.0.0',
-          announcedIp: process.env.ANNOUNCED_IP || '192.168.1.132'
+          announcedIp: ANNOUNCED_IP
         }],
         enableUdp: true,
         enableTcp: true,
