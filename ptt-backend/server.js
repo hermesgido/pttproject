@@ -272,6 +272,40 @@ io.on('connection', (socket) => {
   console.log(`🔌 New connection: ${socket.id}`);
 
   let currentRoom = null;
+  function ensureProactiveConsumersForPeer(sid, peer) {
+    try {
+      if (!peer || !peer.companyId || !peer.deviceId) return;
+      const memberships = DATA.memberships.filter(m => m.deviceId === peer.deviceId).map(m => m.channelId);
+      memberships.forEach((channelId) => {
+        const room = rooms.get(channelId);
+        if (!room) return;
+        const speakerSocketId = room.currentSpeaker;
+        const sp = speakerSocketId ? peers.get(speakerSocketId) : null;
+        if (!sp || !sp.producer) return;
+        const caps = peer.rtpCaps;
+        if (!caps || !router.canConsume({ producerId: sp.producer.id, rtpCapabilities: caps })) return;
+        let recvT = peer.recvTransport;
+        if (!recvT && peer.transports && peer.transports.size > 0) {
+          for (const t of peer.transports.values()) { recvT = t; break; }
+        }
+        if (!recvT) return;
+        recvT.consume({ producerId: sp.producer.id, rtpCapabilities: caps, paused: true }).then((consumer) => {
+          peer.consumer = consumer;
+          io.to(sid).emit('consumer-created', {
+            id: consumer.id,
+            producerId: consumer.producerId,
+            kind: consumer.kind,
+            rtpParameters: consumer.rtpParameters,
+            type: consumer.type
+          });
+        }).catch((e) => {
+          console.error('Proactive consume on caps/recv error:', e.message || e);
+        });
+      });
+    } catch (e) {
+      console.error('ensureProactiveConsumersForPeer error:', e.message || e);
+    }
+  }
 
   // Socket auth: attach company/device to this socket
   socket.on('auth:connect', ({ token, userName }) => {
@@ -291,6 +325,8 @@ io.on('connection', (socket) => {
   socket.on('client-rtp-caps', ({ rtpCapabilities }) => {
     const peer = peers.get(socket.id);
     if (peer) peer.rtpCaps = rtpCapabilities;
+    const p = peers.get(socket.id);
+    if (p) ensureProactiveConsumersForPeer(socket.id, p);
   });
 
   // Join a PTT room
@@ -622,6 +658,8 @@ io.on('connection', (socket) => {
         iceCandidates: transport.iceCandidates,
         dtlsParameters: transport.dtlsParameters
       });
+
+      if (direction === 'recv') ensureProactiveConsumersForPeer(socket.id, peer);
     } catch (error) {
       console.error('Create transport error:', error);
     }
