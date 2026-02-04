@@ -284,10 +284,7 @@ io.on('connection', (socket) => {
         if (!sp || !sp.producer) return;
         const caps = peer.rtpCaps;
         if (!caps || !router.canConsume({ producerId: sp.producer.id, rtpCapabilities: caps })) return;
-        let recvT = peer.recvTransport;
-        if (!recvT && peer.transports && peer.transports.size > 0) {
-          for (const t of peer.transports.values()) { recvT = t; break; }
-        }
+        const recvT = peer.recvTransport;
         if (!recvT) return;
         if (peer.consumers && peer.consumers.has(sp.producer.id)) return;
         recvT.consume({ producerId: sp.producer.id, rtpCapabilities: caps, paused: true }).then((consumer) => {
@@ -565,10 +562,7 @@ io.on('connection', (socket) => {
           if (!members.includes(p2.deviceId)) return;
           const caps = p2.rtpCaps;
           if (!caps || !router.canConsume({ producerId: producer.id, rtpCapabilities: caps })) return;
-          let recvT = p2.recvTransport;
-          if (!recvT && p2.transports && p2.transports.size > 0) {
-            for (const t of p2.transports.values()) { recvT = t; break; }
-          }
+          const recvT = p2.recvTransport;
           if (!recvT) return;
           if (p2.consumers && p2.consumers.has(producer.id)) return;
           const consumer = await recvT.consume({ producerId: producer.id, rtpCapabilities: caps, paused: true });
