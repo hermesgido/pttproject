@@ -279,12 +279,18 @@ io.on('connection', (socket) => {
       const payload = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret');
       const { companyId, deviceId } = payload;
       const existing = peers.get(socket.id) || {};
-      peers.set(socket.id, { ...existing, companyId, deviceId, userName });
+      peers.set(socket.id, { ...existing, companyId, deviceId, userName, rtpCaps: null, recvTransport: null, sendTransport: null, consumers: new Map() });
       presence.set(deviceId, { online: true, lastSeen: Date.now() });
       socket.emit('auth:ok', { deviceId, companyId });
+      socket.emit('rtp-capabilities', router.rtpCapabilities);
     } catch (e) {
       socket.emit('auth:error', { error: 'invalid token' });
     }
+  });
+
+  socket.on('client-rtp-caps', ({ rtpCapabilities }) => {
+    const peer = peers.get(socket.id);
+    if (peer) peer.rtpCaps = rtpCapabilities;
   });
 
   // Join a PTT room
@@ -512,6 +518,34 @@ io.on('connection', (socket) => {
         userName: peer.userName
       });
 
+      const roomId = peer.roomId;
+      const members = DATA.memberships.filter(m => m.channelId === roomId).map(m => m.deviceId);
+      peers.forEach(async (p2, sid2) => {
+        try {
+          if (!p2 || sid2 === socket.id) return;
+          if (!p2.companyId || !p2.deviceId) return;
+          if (!members.includes(p2.deviceId)) return;
+          const caps = p2.rtpCaps;
+          if (!caps || !router.canConsume({ producerId: producer.id, rtpCapabilities: caps })) return;
+          let recvT = p2.recvTransport;
+          if (!recvT && p2.transports && p2.transports.size > 0) {
+            for (const t of p2.transports.values()) { recvT = t; break; }
+          }
+          if (!recvT) return;
+          const consumer = await recvT.consume({ producerId: producer.id, rtpCapabilities: caps, paused: true });
+          p2.consumer = consumer;
+          io.to(sid2).emit('consumer-created', {
+            id: consumer.id,
+            producerId: consumer.producerId,
+            kind: consumer.kind,
+            rtpParameters: consumer.rtpParameters,
+            type: consumer.type
+          });
+        } catch (e) {
+          console.error('Proactive consume error:', e.message || e);
+        }
+      });
+
       // When producer is closed (user leaves)
       producer.on('transportclose', () => {
         console.log(`❌ Producer transport closed for ${peer.userName}`);
@@ -578,6 +612,8 @@ io.on('connection', (socket) => {
 
       if (!peer.transports) peer.transports = new Map();
       peer.transports.set(transport.id, transport);
+      if (direction === 'recv') peer.recvTransport = transport;
+      else if (direction === 'send') peer.sendTransport = transport;
 
       socket.emit('transport-created', {
         direction,
@@ -596,7 +632,7 @@ io.on('connection', (socket) => {
     try {
       const peer = peers.get(socket.id);
       if (peer && peer.consumer) {
-        await peer.consumer.resume();
+        try { await peer.consumer.resume(); } catch (e) { console.error('Resume error:', e.message || e); }
         console.log(`▶️ Consumer resumed for ${peer.userName}`);
       }
     } catch (error) {
@@ -609,7 +645,7 @@ io.on('connection', (socket) => {
     try {
       const peer = peers.get(socket.id);
       if (peer && peer.consumer) {
-        await peer.consumer.pause();
+        try { await peer.consumer.pause(); } catch (e) { console.error('Pause error:', e.message || e); }
         console.log(`⏸️ Consumer paused for ${peer.userName}`);
       }
     } catch (error) {
