@@ -39,6 +39,8 @@ class AlwaysOnPTTService : Service() {
     private var companyId: String? = null
 
     private var recvTransportId: String? = null
+    private var pendingProducerId: String? = null
+    private var pendingRecvTransportInfo: JSONObject? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -116,9 +118,20 @@ class AlwaysOnPTTService : Service() {
 
         override fun onTransportCreated(transportInfo: JSONObject) {
             val direction = transportInfo.optString("direction", "")
-            if (direction == "recv" && recvTransportId == null) {
+            if (recvTransportId == null && (direction == "recv" || direction.isEmpty())) {
+                if (!mediasoup.isDeviceLoaded()) {
+                    pendingRecvTransportInfo = transportInfo
+                    return
+                }
                 recvTransportId = transportInfo.getString("id")
                 mediasoup.createRecvTransport(transportInfo)
+                val pid = pendingProducerId
+                val caps = mediasoup.getDeviceRtpCapabilities()
+                val tId = recvTransportId
+                if (pid != null && caps != null && tId != null) {
+                    signalingClient.consumeAudio(pid, caps, tId)
+                    pendingProducerId = null
+                }
             }
         }
 
@@ -126,14 +139,29 @@ class AlwaysOnPTTService : Service() {
             if (!mediasoup.isDeviceLoaded()) {
                 mediasoup.loadDevice(data)
             }
+            val info = pendingRecvTransportInfo
+            if (recvTransportId == null && info != null) {
+                recvTransportId = info.getString("id")
+                mediasoup.createRecvTransport(info)
+                pendingRecvTransportInfo = null
+            }
+            val pid = pendingProducerId
+            val tId = recvTransportId
+            val caps = mediasoup.getDeviceRtpCapabilities()
+            if (pid != null && caps != null && tId != null) {
+                signalingClient.consumeAudio(pid, caps, tId)
+                pendingProducerId = null
+            }
         }
 
         override fun onNewProducerInRoom(roomId: String, data: JSONObject) {
             val producerId = data.optString("producerId")
             val caps = mediasoup.getDeviceRtpCapabilities()
             val tId = recvTransportId
-            if (producerId.isNotEmpty() && caps != null) {
+            if (producerId.isNotEmpty() && caps != null && tId != null) {
                 signalingClient.consumeAudio(producerId, caps, tId)
+            } else if (producerId.isNotEmpty()) {
+                pendingProducerId = producerId
             }
         }
 
