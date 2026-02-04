@@ -36,7 +36,6 @@ import org.webrtc.IceCandidate
 import org.webrtc.PeerConnection
 import org.webrtc.SessionDescription
 import com.ropex.pptapp.Constants
-import com.ropex.pptapp.mediasoup.MediasoupController
 import com.ropex.pptapp.mediasoup.AndroidMediasoupController
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -107,8 +106,6 @@ class MainActivity : ComponentActivity() {
     private var sendTransportId: String? = null
     private var recvTransportId: String? = null
     private var currentProducerId: String? = null
-    private var dtlsParametersJson: JSONObject? = null
-    private var rtpParametersJson: JSONObject? = null
     private var pendingSendTransportInfo: JSONObject? = null
     private var pendingRecvTransportInfo: JSONObject? = null
     private val connectedUsers = mutableSetOf<String>()
@@ -121,7 +118,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var audioManager: AudioManager
     private lateinit var signalingClient: SignalingClient
     private lateinit var webRTCManager: WebRTCManager
-    private lateinit var mediasoupController: MediasoupController
     private lateinit var androidMediasoupController: AndroidMediasoupController
     private lateinit var httpClient: OkHttpClient
     private var deviceId: String? = null
@@ -173,12 +169,6 @@ class MainActivity : ComponentActivity() {
             context = this,
             signalingListener = webRTCListener
         )
-
-        mediasoupController = MediasoupController()
-        mediasoupController.setCallback { dtls, rtp ->
-            dtlsParametersJson = dtls
-            rtpParametersJson = rtp
-        }
 
         androidMediasoupController = AndroidMediasoupController(signalingClient)
         androidMediasoupController.initialize(this)
@@ -492,7 +482,6 @@ class MainActivity : ComponentActivity() {
             webRTCManager.addLocalAudioTrack()
             signalingClient.createTransport("send")
             signalingClient.createTransport("recv")
-            mediasoupController.prepareProducer(Constants.WebRTC.AUDIO_TRACK_ID)
             uiScope.launch {
                 connectedUsers.clear()
                 connectedUsers.add(userId)
@@ -586,8 +575,6 @@ class MainActivity : ComponentActivity() {
             val iceCandidates = transportInfo.optJSONArray("iceCandidates")
             val dtlsParameters = transportInfo.optJSONObject("dtlsParameters")
             if (iceParameters != null && dtlsParameters != null) {
-                val candidatesObj = JSONObject().apply { put("candidates", iceCandidates) }
-                mediasoupController.createTransport(direction, id, iceParameters, candidatesObj, dtlsParameters)
                 if (direction == "send") {
                     if (androidMediasoupController.isDeviceLoaded()) {
                         androidMediasoupController.createSendTransport(transportInfo)
@@ -600,12 +587,6 @@ class MainActivity : ComponentActivity() {
                     } else {
                         pendingRecvTransportInfo = transportInfo
                     }
-                } else {
-                    if (androidMediasoupController.isDeviceLoaded()) {
-                        androidMediasoupController.createSendTransport(transportInfo)
-                    } else {
-                        pendingSendTransportInfo = transportInfo
-                    }
                 }
             }
         }
@@ -613,7 +594,6 @@ class MainActivity : ComponentActivity() {
         override fun onRtpCapabilities(data: JSONObject) {
             rtpCapabilitiesJson = data
             if (!androidMediasoupController.isDeviceLoaded()) {
-                mediasoupController.initDevice(data)
                 androidMediasoupController.loadDevice(data)
             }
             pendingSendTransportInfo?.let {
@@ -931,8 +911,6 @@ class MainActivity : ComponentActivity() {
             sendTransportId = null
             recvTransportId = null
             currentProducerId = null
-            dtlsParametersJson = null
-            rtpParametersJson = null
             pendingSendTransportInfo = null
             pendingRecvTransportInfo = null
             roomId = ""
