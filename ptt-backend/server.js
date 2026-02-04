@@ -289,8 +289,10 @@ io.on('connection', (socket) => {
           for (const t of peer.transports.values()) { recvT = t; break; }
         }
         if (!recvT) return;
+        if (peer.consumers && peer.consumers.has(sp.producer.id)) return;
         recvT.consume({ producerId: sp.producer.id, rtpCapabilities: caps, paused: true }).then((consumer) => {
-          peer.consumer = consumer;
+          if (!peer.consumers) peer.consumers = new Map();
+          peer.consumers.set(sp.producer.id, consumer);
           io.to(sid).emit('consumer-created', {
             id: consumer.id,
             producerId: consumer.producerId,
@@ -568,8 +570,10 @@ io.on('connection', (socket) => {
             for (const t of p2.transports.values()) { recvT = t; break; }
           }
           if (!recvT) return;
+          if (p2.consumers && p2.consumers.has(producer.id)) return;
           const consumer = await recvT.consume({ producerId: producer.id, rtpCapabilities: caps, paused: true });
-          p2.consumer = consumer;
+          if (!p2.consumers) p2.consumers = new Map();
+          p2.consumers.set(producer.id, consumer);
           io.to(sid2).emit('consumer-created', {
             id: consumer.id,
             producerId: consumer.producerId,
@@ -669,8 +673,10 @@ io.on('connection', (socket) => {
   socket.on('resume-consumer', async () => {
     try {
       const peer = peers.get(socket.id);
-      if (peer && peer.consumer) {
-        try { await peer.consumer.resume(); } catch (e) { console.error('Resume error:', e.message || e); }
+      if (peer && peer.consumers && peer.consumers.size > 0) {
+        for (const c of peer.consumers.values()) {
+          try { await c.resume(); } catch (e) { console.error('Resume error:', e.message || e); }
+        }
         console.log(`▶️ Consumer resumed for ${peer.userName}`);
       }
     } catch (error) {
@@ -682,8 +688,10 @@ io.on('connection', (socket) => {
   socket.on('pause-consumer', async () => {
     try {
       const peer = peers.get(socket.id);
-      if (peer && peer.consumer) {
-        try { await peer.consumer.pause(); } catch (e) { console.error('Pause error:', e.message || e); }
+      if (peer && peer.consumers && peer.consumers.size > 0) {
+        for (const c of peer.consumers.values()) {
+          try { await c.pause(); } catch (e) { console.error('Pause error:', e.message || e); }
+        }
         console.log(`⏸️ Consumer paused for ${peer.userName}`);
       }
     } catch (error) {
