@@ -120,6 +120,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var webRTCManager: WebRTCManager
     private lateinit var androidMediasoupController: AndroidMediasoupController
     private lateinit var httpClient: OkHttpClient
+
     private var deviceId: String? = null
     private var companyId: String? = null
     private var selectedTabIndex by mutableStateOf(0)
@@ -1102,7 +1103,7 @@ fun MainTabbedScreen(
                                 onClick = {},
                                 enabled = false
                             )
-                            Divider()
+                            HorizontalDivider()
                             DropdownMenuItem(
                                 text = { Text("Toggle Speaker") },
                                 onClick = {
