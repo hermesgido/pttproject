@@ -73,16 +73,33 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusTarget
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.MarkEmailUnread
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Tag
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.outlined.East
+import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
+import kotlin.math.max
+import kotlin.math.min
 
 
 class MainActivity : ComponentActivity() {
@@ -425,7 +442,7 @@ class MainActivity : ComponentActivity() {
     private fun setVoiceCallVolumeFraction(f: Float) {
         try {
             val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
-            val vol = kotlin.math.max(1, kotlin.math.min(maxVolume, (maxVolume * f).toInt()))
+            val vol = max(1, min(maxVolume, (maxVolume * f).toInt()))
             audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, vol, 0)
             Log.d("PTT", "VOICE_CALL volume set: $vol/$maxVolume")
         } catch (_: Exception) {}
@@ -728,7 +745,10 @@ class MainActivity : ComponentActivity() {
                         j++
                     }
                     if (selfMember) {
-                        out.add(ChannelItem(cid, name, members, online))
+                        out.add(ChannelItem(
+                            cid, name, members, online,
+                            isMuted = ( false)
+                        ))
                     }
                 }
                 i++
@@ -805,7 +825,12 @@ class MainActivity : ComponentActivity() {
             activeSessionName = otherName
             activeSessionType = "contact"
             signalingClient.joinChannel(chId, userId, userName)
-            saveRecent(RecentItem("contact", otherDeviceId, otherName, System.currentTimeMillis()))
+            saveRecent(RecentItem(
+                "contact", otherDeviceId, otherName, System.currentTimeMillis(),
+                isMuted = (false),
+                lastMessage = "",
+                hasUnread = (false)
+            ))
         } else {
             showToast("Unable to start contact talk")
         }
@@ -818,7 +843,12 @@ class MainActivity : ComponentActivity() {
         activeSessionName = channelName
         activeSessionType = "channel"
         signalingClient.joinChannel(channelId, userId, userName)
-        saveRecent(RecentItem("channel", channelId, channelName, System.currentTimeMillis()))
+        saveRecent(RecentItem(
+            "channel", channelId, channelName, System.currentTimeMillis(),
+            isMuted = (false),
+            lastMessage = "",
+            hasUnread = (false)
+        ))
     }
 
     private fun loadRecents(): List<RecentItem> {
@@ -834,7 +864,12 @@ class MainActivity : ComponentActivity() {
                 val id = o.optString("refId")
                 val nm = o.optString("name")
                 val ts = o.optLong("ts")
-                if (t.isNotEmpty() && id.isNotEmpty()) out.add(RecentItem(t, id, nm, ts))
+                if (t.isNotEmpty() && id.isNotEmpty()) out.add(RecentItem(
+                    t, id, nm, ts,
+                    isMuted = (false),
+                    lastMessage = "",
+                    hasUnread = (false)
+                ))
                 i++
             }
             out
@@ -1056,7 +1091,7 @@ fun MainTabbedScreen(
             // Modern Top Bar
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.primaryContainer,
+                color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 4.dp
             ) {
                 Row(
@@ -1066,13 +1101,32 @@ fun MainTabbedScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "PTT Radio",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.avator),
+                            contentDescription = "User Avatar",
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                        )
 
+                        Column {
+                            Text(
+                                text = "Welcome back,",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = accountDisplayName,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
                     Box {
                         IconButton(onClick = onToggleSettingsMenu) {
                             Text(
@@ -1133,10 +1187,10 @@ fun MainTabbedScreen(
                     .onKeyEvent {
                         val action = it.nativeKeyEvent.action
                         val keyCode = it.nativeKeyEvent.keyCode
-                        if (action == android.view.KeyEvent.ACTION_DOWN && keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
+                        if (action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
                             onSelectTab((selectedTabIndex + 2) % 3)
                             true
-                        } else if (action == android.view.KeyEvent.ACTION_DOWN && keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) {
+                        } else if (action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
                             onSelectTab((selectedTabIndex + 1) % 3)
                             true
                         } else {
@@ -1281,10 +1335,10 @@ fun TalkScreen(
                     .onKeyEvent {
                         val action = it.nativeKeyEvent.action
                         val keyCode = it.nativeKeyEvent.keyCode
-                        if (action == android.view.KeyEvent.ACTION_DOWN && keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
+                        if (action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
                             onSelectSegment((selectedSegment + 3) % 4)
                             true
-                        } else if (action == android.view.KeyEvent.ACTION_DOWN && keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) {
+                        } else if (action == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
                             onSelectSegment((selectedSegment + 1) % 4)
                             true
                         } else {
@@ -1591,16 +1645,16 @@ fun ModernPTTButton(
                 if (!enabled) return@onKeyEvent false
                 val action = it.nativeKeyEvent.action
                 val keyCode = it.nativeKeyEvent.keyCode
-                if (action == android.view.KeyEvent.ACTION_DOWN &&
-                    (keyCode == android.view.KeyEvent.KEYCODE_ENTER || keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER || keyCode == android.view.KeyEvent.KEYCODE_SPACE)) {
+                if (action == KeyEvent.ACTION_DOWN &&
+                    (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_SPACE)) {
                     if (!isButtonPressed) {
                         isButtonPressed = true
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onPress()
                     }
                     true
-                } else if (action == android.view.KeyEvent.ACTION_UP &&
-                    (keyCode == android.view.KeyEvent.KEYCODE_ENTER || keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER || keyCode == android.view.KeyEvent.KEYCODE_SPACE)) {
+                } else if (action == KeyEvent.ACTION_UP &&
+                    (keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_SPACE)) {
                     if (isButtonPressed) {
                         isButtonPressed = false
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -1729,38 +1783,172 @@ fun RecentsTab(
     }
 }
 
+//
+//@Composable
+//fun SwipeableRecentItem(
+//    item: RecentItem,
+//    onClick: () -> Unit,
+//    onDelete: () -> Unit
+//) {
+//    val density = LocalContext.current.resources.displayMetrics.density
+//    val thresholdPx = 120f * density
+//    var offsetX by remember { mutableStateOf(0f) }
+//
+//    Box(
+//        modifier = Modifier
+//            .fillMaxWidth()
+//            .padding(horizontal = 8.dp, vertical = 4.dp)
+//    ) {
+//        // Delete background
+//        Surface(
+//            modifier = Modifier
+//                .fillMaxWidth()
+//                .height(72.dp)
+//                .clip(RoundedCornerShape(12.dp)),
+//            color = Color(0xFFD32F2F)
+//        ) {
+//            Box(
+//                modifier = Modifier.fillMaxSize(),
+//                contentAlignment = Alignment.CenterEnd
+//            ) {
+//                Text(
+//                    text = "Delete",
+//                    color = Color.White,
+//                    fontWeight = FontWeight.Bold,
+//                    modifier = Modifier.padding(end = 24.dp)
+//                )
+//            }
+//        }
+//
+//        // Swipeable content
+//        Surface(
+//            modifier = Modifier
+//                .offset { IntOffset(offsetX.roundToInt(), 0) }
+//                .fillMaxWidth()
+//                .height(72.dp)
+//                .clip(RoundedCornerShape(12.dp))
+//                .pointerInput(Unit) {
+//                    detectHorizontalDragGestures(
+//                        onHorizontalDrag = { _, dragAmount ->
+//                            offsetX = (offsetX + dragAmount).coerceIn(-thresholdPx * 2, 0f)
+//                        },
+//                        onDragEnd = {
+//                            if (offsetX < -thresholdPx) {
+//                                onDelete()
+//                            }
+//                            offsetX = 0f
+//                        }
+//                    )
+//                }
+//                .clickable(onClick = onClick),
+//            color = MaterialTheme.colorScheme.surface,
+//            shadowElevation = 2.dp
+//        ) {
+//            Row(
+//                modifier = Modifier
+//                    .fillMaxSize()
+//                    .padding(horizontal = 16.dp, vertical = 12.dp),
+//                verticalAlignment = Alignment.CenterVertically,
+//                horizontalArrangement = Arrangement.SpaceBetween
+//            ) {
+//                Row(
+//                    verticalAlignment = Alignment.CenterVertically,
+//                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+//                    modifier = Modifier.weight(1f)
+//                ) {
+//                    // Icon
+//                    Box(
+//                        modifier = Modifier
+//                            .size(48.dp)
+//                            .clip(CircleShape)
+//                            .background(
+//                                if (item.type == "contact")
+//                                    MaterialTheme.colorScheme.primaryContainer
+//                                else
+//                                    MaterialTheme.colorScheme.secondaryContainer
+//                            ),
+//                        contentAlignment = Alignment.Center
+//                    ) {
+//                        Text(
+//                            text = if (item.type == "contact") "👤" else "📻",
+//                            style = MaterialTheme.typography.titleLarge
+//                        )
+//                    }
+//
+//                    Column(modifier = Modifier.weight(1f)) {
+//                        Text(
+//                            text = item.name,
+//                            style = MaterialTheme.typography.bodyLarge,
+//                            fontWeight = FontWeight.Medium,
+//                            maxLines = 1,
+//                            overflow = TextOverflow.Ellipsis
+//                        )
+//                        Text(
+//                            text = if (item.type == "contact") "Direct" else "Channel",
+//                            style = MaterialTheme.typography.bodySmall,
+//                            color = MaterialTheme.colorScheme.outline
+//                        )
+//                    }
+//                }
+//
+//                Text(
+//                    text = formatTime(item.ts),
+//                    style = MaterialTheme.typography.bodySmall,
+//                    color = MaterialTheme.colorScheme.outline
+//                )
+//            }
+//        }
+//    }
+//}
+
+
 @Composable
 fun SwipeableRecentItem(
     item: RecentItem,
+    isPinned: Boolean = false,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onPin: () -> Unit = {},
+    onMute: () -> Unit = {},
+    onMarkUnread: () -> Unit = {}
 ) {
     val density = LocalContext.current.resources.displayMetrics.density
     val thresholdPx = 120f * density
-    var offsetX by remember { mutableStateOf(0f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var showMenu by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(horizontal = 16.dp, vertical = 6.dp)
     ) {
-        // Delete background
+        // Delete background (revealed when swiping left)
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(72.dp)
-                .clip(RoundedCornerShape(12.dp)),
+                .height(76.dp)
+                .clip(RoundedCornerShape(16.dp)),
             color = Color(0xFFD32F2F)
         ) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.CenterEnd
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Delete",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Delete",
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(end = 24.dp)
+                    style = MaterialTheme.typography.titleMedium
                 )
             }
         }
@@ -1770,8 +1958,8 @@ fun SwipeableRecentItem(
             modifier = Modifier
                 .offset { IntOffset(offsetX.roundToInt(), 0) }
                 .fillMaxWidth()
-                .height(72.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .height(76.dp)
+                .clip(RoundedCornerShape(16.dp))
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { _, dragAmount ->
@@ -1786,61 +1974,275 @@ fun SwipeableRecentItem(
                     )
                 }
                 .clickable(onClick = onClick),
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 2.dp
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            tonalElevation = if (isPinned) 4.dp else 1.dp,
+            shadowElevation = if (isPinned) 4.dp else 0.dp
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    // Icon
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (item.type == "contact")
-                                    MaterialTheme.colorScheme.primaryContainer
-                                else
+                // Icon with gradient background
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(
+                            if (item.type == "contact") CircleShape
+                            else RoundedCornerShape(14.dp)
+                        )
+                        .background(
+                            brush = Brush.linearGradient(
+                                colors = if (item.type == "contact") listOf(
+                                    MaterialTheme.colorScheme.primaryContainer,
                                     MaterialTheme.colorScheme.secondaryContainer
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
+                                ) else listOf(
+                                    MaterialTheme.colorScheme.secondaryContainer,
+                                    MaterialTheme.colorScheme.tertiaryContainer
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (item.type == "contact") {
+                        // Show first letter for contacts
                         Text(
-                            text = if (item.type == "contact") "👤" else "📻",
-                            style = MaterialTheme.typography.titleLarge
+                            text = item.name.firstOrNull()?.uppercase() ?: "?",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
+                    } else {
+                        // Show emoji for channels
                         Text(
-                            text = item.name,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = if (item.type == "contact") "Direct" else "Channel",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline
+                            text = "📻",
+                            style = MaterialTheme.typography.headlineMedium
                         )
                     }
                 }
 
-                Text(
-                    text = formatTime(item.ts),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline
-                )
+                // Content
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = item.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = if (item.hasUnread) FontWeight.Bold else FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        // Pin indicator
+                        if (isPinned) {
+                            Icon(
+                                imageVector = Icons.Filled.Star,
+                                contentDescription = "Pinned",
+                                modifier = Modifier.size(16.dp),
+                                tint = Color(0xFFFFB300)
+                            )
+                        }
+
+                        // Unread badge
+                        if (item.hasUnread) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary)
+                            )
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Type indicator with icon
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (item.type == "contact") Icons.Default.Person else Icons.Default.Tag,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = if (item.type == "contact") "Direct" else "Channel",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        // Last message preview (if available)
+                        if (item.lastMessage != null) {
+                            Text(
+                                text = "•",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.outline
+                            )
+
+                        }
+                    }
+                }
+
+                // Time and menu
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = formatTime(item.ts),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (item.hasUnread)
+                            MaterialTheme.colorScheme.primary
+                        else
+                            MaterialTheme.colorScheme.outline,
+                        fontWeight = if (item.hasUnread) FontWeight.Bold else FontWeight.Normal
+                    )
+
+                    // Three-dot menu
+                    Box {
+                        IconButton(
+                            onClick = { showMenu = true },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "More options",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Dropdown menu
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false },
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                .padding(vertical = 4.dp)
+                        ) {
+                            // Pin/Unpin option
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isPinned) Icons.Default.Star else Icons.Outlined.Star,
+                                            contentDescription = null,
+                                            tint = if (isPinned) Color(0xFFFFB300) else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = if (isPinned) "Unpin" else "Pin",
+                                            style = MaterialTheme.typography.bodyLarge
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    onPin()
+                                    showMenu = false
+                                },
+                                leadingIcon = {}
+                            )
+
+                            // Mark as unread (if read)
+                            if (!item.hasUnread) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.MarkEmailUnread,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = "Mark as Unread",
+                                                style = MaterialTheme.typography.bodyLarge
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        onMarkUnread()
+                                        showMenu = false
+                                    },
+                                    leadingIcon = {}
+                                )
+                            }
+
+                            // Mute option
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (item.isMuted) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = if (item.isMuted) "Unmute" else "Mute",
+                                            style = MaterialTheme.typography.bodyLarge
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    onMute()
+                                    showMenu = false
+                                },
+                                leadingIcon = {}
+                            )
+
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant
+                            )
+
+                            // Delete option
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = null,
+                                            tint = Color(0xFFD32F2F)
+                                        )
+                                        Text(
+                                            text = "Delete",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = Color(0xFFD32F2F)
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    onDelete()
+                                    showMenu = false
+                                },
+                                leadingIcon = {}
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -1874,78 +2276,303 @@ fun ContactsTab(
     }
 }
 
+
+//
+//
+//@Composable
+//fun ContactListItem(
+//    contact: DeviceItem,
+//    isOnline: Boolean,
+//    onClick: () -> Unit
+//) {
+//    Surface(
+//        modifier = Modifier
+//            .fillMaxWidth()
+//            .padding(horizontal = 8.dp, vertical = 4.dp)
+//            .clip(RoundedCornerShape(12.dp))
+//            .clickable(onClick = onClick),
+//        color = MaterialTheme.colorScheme.surface,
+//        shadowElevation = 2.dp
+//    ) {
+//        Row(
+//            modifier = Modifier
+//                .fillMaxWidth()
+//                .padding(horizontal = 16.dp, vertical = 12.dp),
+//            verticalAlignment = Alignment.CenterVertically,
+//            horizontalArrangement = Arrangement.spacedBy(12.dp)
+//        ) {
+//            // Avatar with status
+//            Box {
+//                Box(
+//                    modifier = Modifier
+//                        .size(48.dp)
+//                        .clip(CircleShape)
+//                        .background(MaterialTheme.colorScheme.primaryContainer),
+//                    contentAlignment = Alignment.Center
+//                ) {
+//                    Text(
+//                        text = contact.displayName.firstOrNull()?.uppercase() ?: "?",
+//                        style = MaterialTheme.typography.titleLarge,
+//                        fontWeight = FontWeight.Bold,
+//                        color = MaterialTheme.colorScheme.onPrimaryContainer
+//                    )
+//                }
+//                // Online status indicator
+//                Box(
+//                    modifier = Modifier
+//                        .size(14.dp)
+//                        .align(Alignment.BottomEnd)
+//                        .clip(CircleShape)
+//                        .background(if (isOnline) Color(0xFF4CAF50) else Color(0xFF9E9E9E))
+//                        .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape)
+//                )
+//            }
+//
+//            Column(modifier = Modifier.weight(1f)) {
+//                Text(
+//                    text = contact.displayName,
+//                    style = MaterialTheme.typography.bodyLarge,
+//                    fontWeight = FontWeight.Medium,
+//                    maxLines = 1,
+//                    overflow = TextOverflow.Ellipsis
+//                )
+//                Text(
+//                    text = if (isOnline) "Online" else "Offline",
+//                    style = MaterialTheme.typography.bodySmall,
+//                    color = if (isOnline) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline
+//                )
+//            }
+//
+//            Text(
+//                text = "→",
+//                style = MaterialTheme.typography.titleMedium,
+//                color = MaterialTheme.colorScheme.outline
+//            )
+//        }
+//    }
+//}
+
 @Composable
 fun ContactListItem(
     contact: DeviceItem,
     isOnline: Boolean,
-    onClick: () -> Unit
+    isPinned: Boolean = false,
+    onClick: () -> Unit,
+    onPin: () -> Unit = {},
+    onCall: () -> Unit = {},
+    onView: () -> Unit = {}
 ) {
+    var showMenu by remember { mutableStateOf(false) }
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick),
-        color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 2.dp
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = if (isPinned) 4.dp else 1.dp,
+        shadowElevation = if (isPinned) 4.dp else 0.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Avatar with status
+            // Avatar with online status indicator
             Box {
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
+                        .size(56.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .background(
+                            brush = Brush.linearGradient(
+                                colors = listOf(
+                                    MaterialTheme.colorScheme.primaryContainer,
+                                    MaterialTheme.colorScheme.secondaryContainer
+                                )
+                            )
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = contact.displayName.firstOrNull()?.uppercase() ?: "?",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
-                // Online status indicator
+
+                // Online status indicator with animation
                 Box(
                     modifier = Modifier
-                        .size(14.dp)
+                        .size(16.dp)
                         .align(Alignment.BottomEnd)
+                        .offset(x = 2.dp, y = 2.dp)
                         .clip(CircleShape)
-                        .background(if (isOnline) Color(0xFF4CAF50) else Color(0xFF9E9E9E))
-                        .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                        .background(if (isOnline) Color(0xFF4CAF50) else Color(0xFFBDBDBD))
+                        .border(
+                            width = 2.5.dp,
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = CircleShape
+                        )
                 )
             }
 
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = contact.displayName,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = if (isOnline) "Online" else "Offline",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (isOnline) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline
-                )
+            // Contact info
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = contact.displayName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    // Pin indicator
+                    if (isPinned) {
+                        Icon(
+                            imageVector = Icons.Filled.Star,
+                            contentDescription = "Pinned",
+                            modifier = Modifier.size(16.dp),
+                            tint = Color(0xFFFFB300)
+                        )
+                    }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = if (isOnline) "Online" else "Offline",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (isOnline) FontWeight.Medium else FontWeight.Normal,
+                        color = if (isOnline)
+                            Color(0xFF2E7D32)
+                        else
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
-            Text(
-                text = "→",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.outline
-            )
+            // Three-dot menu
+            Box {
+                IconButton(
+                    onClick = { showMenu = true },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "More options",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Dropdown menu
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false },
+                    modifier = Modifier
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .padding(vertical = 1.dp)
+                ) {
+                    // Pin/Unpin option
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPinned) Icons.Default.Star else Icons.Outlined.Star,
+                                    contentDescription = null,
+                                    tint = if (isPinned) Color(0xFFFFB300) else MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = if (isPinned) "Unpin Contact" else "Pin Contact",
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            }
+                        },
+                        onClick = {
+                            onPin()
+                            showMenu = false
+                        },
+                        leadingIcon = {}
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant
+                    )
+
+                    // Call option
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Call,
+                                    contentDescription = null,
+                                    tint = Color(0xFF4CAF50)
+                                )
+                                Text(
+                                    text = "Call",
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            }
+                        },
+                        onClick = {
+                            onCall()
+                            showMenu = false
+                        },
+                        enabled = isOnline,
+                        leadingIcon = {}
+                    )
+
+                    // View option
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Person,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "View Profile",
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            }
+                        },
+                        onClick = {
+                            onView()
+                            showMenu = false
+                        },
+                        leadingIcon = {}
+                    )
+                }
+            }
         }
     }
 }
+
 
 @Composable
 fun ChannelsTab(
@@ -1973,76 +2600,317 @@ fun ChannelsTab(
     }
 }
 
+//@Composable
+//fun ChannelListItem(
+//    channel: ChannelItem,
+//    onClick: () -> Unit
+//) {
+//    Surface(
+//        modifier = Modifier
+//            .fillMaxWidth()
+//            .padding(horizontal = 8.dp, vertical = 4.dp)
+//            .clip(RoundedCornerShape(12.dp))
+//            .clickable(onClick = onClick),
+//        color = MaterialTheme.colorScheme.surface,
+//        shadowElevation = 2.dp
+//    ) {
+//        Row(
+//            modifier = Modifier
+//                .fillMaxWidth()
+//                .padding(horizontal = 16.dp, vertical = 12.dp),
+//            verticalAlignment = Alignment.CenterVertically,
+//            horizontalArrangement = Arrangement.spacedBy(12.dp)
+//        ) {
+//            // Channel icon
+//            Box(
+//                modifier = Modifier
+//                    .size(48.dp)
+//                    .clip(CircleShape)
+//                    .background(MaterialTheme.colorScheme.secondaryContainer),
+//                contentAlignment = Alignment.Center
+//            ) {
+//                Text(
+//                    text = "📻",
+//                    style = MaterialTheme.typography.titleLarge
+//                )
+//            }
+//
+//            Column(modifier = Modifier.weight(1f)) {
+//                Text(
+//                    text = channel.name,
+//                    style = MaterialTheme.typography.bodyLarge,
+//                    fontWeight = FontWeight.Medium,
+//                    maxLines = 1,
+//                    overflow = TextOverflow.Ellipsis
+//                )
+//                Row(
+//                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+//                    verticalAlignment = Alignment.CenterVertically
+//                ) {
+//                    Text(
+//                        text = "${channel.online} online",
+//                        style = MaterialTheme.typography.bodySmall,
+//                        color = Color(0xFF4CAF50)
+//                    )
+//                    Text(
+//                        text = "•",
+//                        style = MaterialTheme.typography.bodySmall,
+//                        color = MaterialTheme.colorScheme.outline
+//                    )
+//                    Text(
+//                        text = "${channel.members} members",
+//                        style = MaterialTheme.typography.bodySmall,
+//                        color = MaterialTheme.colorScheme.outline
+//                    )
+//                }
+//            }
+//
+//            Text(
+//                text = "→",
+//                style = MaterialTheme.typography.titleMedium,
+//                color = MaterialTheme.colorScheme.outline
+//            )
+//        }
+//    }
+//}
+
+
 @Composable
 fun ChannelListItem(
     channel: ChannelItem,
-    onClick: () -> Unit
+    isPinned: Boolean = false,
+    onClick: () -> Unit,
+    onPin: () -> Unit = {},
+    onMute: () -> Unit = {},
+    onView: () -> Unit = {}
 ) {
+    var showMenu by remember { mutableStateOf(false) }
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick),
-        color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 2.dp
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = if (isPinned) 4.dp else 1.dp,
+        shadowElevation = if (isPinned) 4.dp else 0.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Channel icon
+            // Channel icon with gradient background
             Box(
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.secondaryContainer),
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(14.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "📻",
-                    style = MaterialTheme.typography.titleLarge
+                Image(
+                    painter = painterResource(id = R.drawable.channel),
+                    contentDescription = "User Avatar",
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
                 )
+
             }
 
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = channel.name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+            // Channel info
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "${channel.online} online",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF4CAF50)
+                        text = channel.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
+
+                    // Pin indicator
+                    if (isPinned) {
+                        Icon(
+                            imageVector = Icons.Filled.Star,
+                            contentDescription = "Pinned",
+                            modifier = Modifier.size(16.dp),
+                            tint = Color(0xFFFFB300)
+                        )
+                    }
+
+                    // Mute indicator (if channel is muted)
+                    if (channel.isMuted) {
+                        Icon(
+                            imageVector = Icons.Default.VolumeOff,
+                            contentDescription = "Muted",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.outline
+                        )
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Online members
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF4CAF50))
+                        )
+                        Text(
+                            text = "${channel.online} online",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF2E7D32)
+                        )
+                    }
+
+                    // Separator
                     Text(
                         text = "•",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.outline
                     )
-                    Text(
-                        text = "${channel.members} members",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline
-                    )
+
+                    // Total members
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.People,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${channel.members} members",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
-            Text(
-                text = "→",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.outline
-            )
+            // Three-dot menu
+            Box {
+                IconButton(
+                    onClick = { showMenu = true },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "More options",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Dropdown menu
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false },
+                    modifier = Modifier
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .padding(vertical = 4.dp)
+                ) {
+                    // Pin/Unpin option
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPinned) Icons.Default.Star else Icons.Outlined.Star,
+                                    contentDescription = null,
+                                    tint = if (isPinned) Color(0xFFFFB300) else MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = if (isPinned) "Unpin Channel" else "Pin Channel",
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            }
+                        },
+                        onClick = {
+                            onPin()
+                            showMenu = false
+                        },
+                        leadingIcon = {}
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant
+                    )
+
+                    // Mute/Unmute option
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (channel.isMuted) Icons.AutoMirrored.Filled.  VolumeUp else Icons.Default.VolumeOff,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = if (channel.isMuted) "Unmute Channel" else "Mute Channel",
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            }
+                        },
+                        onClick = {
+                            onMute()
+                            showMenu = false
+                        },
+                        leadingIcon = {}
+                    )
+
+                    // View Channel Info option
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "View Channel Info",
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            }
+                        },
+                        onClick = {
+                            onView()
+                            showMenu = false
+                        },
+                        leadingIcon = {}
+                    )
+                }
+            }
         }
     }
 }
@@ -2253,7 +3121,7 @@ fun formatTime(timestamp: Long): String {
 
 // Data classes
 data class DeviceItem(val id: String, val displayName: String, val accountNumber: String)
-data class ChannelItem(val id: String, val name: String, val members: Int, val online: Int)
+data class ChannelItem(val id: String, val name: String, val members: Int, val online: Int ,val isMuted: Boolean)
 data class PresenceInfo(val online: Boolean, val lastSeen: Long?)
-data class RecentItem(val type: String, val refId: String, val name: String, val ts: Long)
+data class RecentItem(val type: String, val refId: String, val name: String, val ts: Long, val isMuted: Boolean, val lastMessage: Any, val hasUnread: Boolean)
 data class MemberItem(val id: String, val name: String, val online: Boolean, val distanceKm: Long?)
