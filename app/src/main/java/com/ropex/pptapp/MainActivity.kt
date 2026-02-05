@@ -97,6 +97,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import kotlin.math.max
 import kotlin.math.min
@@ -2685,36 +2686,48 @@ fun ChannelListItem(
     onView: () -> Unit = {}
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    val cfg = LocalConfiguration.current
+    val isCompact = cfg.screenWidthDp < 360
+    val hPad = if (isCompact) 12.dp else 16.dp
+    val vPad = if (isCompact) 8.dp else 16.dp
+    val itemHPad = if (isCompact) 12.dp else 16.dp
+    val itemVPad = if (isCompact) 4.dp else 6.dp
+    val iconBox = if (isCompact) 40.dp else 56.dp
+    val imageSize = if (isCompact) 28.dp else 40.dp
+    val corner = if (isCompact) 12.dp else 16.dp
+    val nameStyle = if (isCompact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleMedium
+    val statStyle = if (isCompact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium
+    val menuSize = if (isCompact) 32.dp else 40.dp
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .padding(horizontal = itemHPad, vertical = itemVPad)
+            .clip(RoundedCornerShape(corner))
             .clickable(onClick = onClick),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         tonalElevation = if (isPinned) 4.dp else 1.dp,
-        shadowElevation = if (isPinned) 4.dp else 0.dp
+        shadowElevation = if (isPinned) 3.dp else 0.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = hPad, vertical = vPad),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+            horizontalArrangement = Arrangement.spacedBy(if (isCompact) 12.dp else 16.dp)
         ) {
             // Channel icon with gradient background
             Box(
                 modifier = Modifier
-                    .size(56.dp)
-                    .clip(RoundedCornerShape(14.dp)),
+                    .size(iconBox)
+                    .clip(RoundedCornerShape(if (isCompact) 10.dp else 14.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Image(
                     painter = painterResource(id = R.drawable.channel),
                     contentDescription = "User Avatar",
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(imageSize)
                         .clip(CircleShape)
                 )
 
@@ -2723,15 +2736,15 @@ fun ChannelListItem(
             // Channel info
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(if (isCompact) 4.dp else 6.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
                         text = channel.name,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = nameStyle,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -2743,7 +2756,7 @@ fun ChannelListItem(
                         Icon(
                             imageVector = Icons.Filled.Star,
                             contentDescription = "Pinned",
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.size(if (isCompact) 14.dp else 16.dp),
                             tint = Color(0xFFFFB300)
                         )
                     }
@@ -2753,58 +2766,61 @@ fun ChannelListItem(
                         Icon(
                             imageVector = Icons.Default.VolumeOff,
                             contentDescription = "Muted",
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.size(if (isCompact) 14.dp else 16.dp),
                             tint = MaterialTheme.colorScheme.outline
                         )
                     }
                 }
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Online members
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF4CAF50))
-                        )
-                        Text(
-                            text = "${channel.online} online",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFF2E7D32)
-                        )
-                    }
-
-                    // Separator
+                if (isCompact) {
                     Text(
-                        text = "•",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.outline
+                        text = "${channel.online} online • ${channel.members} mem",
+                        style = statStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-
-                    // Total members
+                } else {
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.People,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF4CAF50))
+                            )
+                            Text(
+                                text = "${channel.online} online",
+                                style = statStyle,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFF2E7D32)
+                            )
+                        }
                         Text(
-                            text = "${channel.members} members",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = "•",
+                            style = statStyle,
+                            color = MaterialTheme.colorScheme.outline
                         )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.People,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "${channel.members} members",
+                                style = statStyle,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
@@ -2813,7 +2829,7 @@ fun ChannelListItem(
             Box {
                 IconButton(
                     onClick = { showMenu = true },
-                    modifier = Modifier.size(40.dp)
+                    modifier = Modifier.size(menuSize)
                 ) {
                     Icon(
                         imageVector = Icons.Default.MoreVert,
@@ -2821,8 +2837,6 @@ fun ChannelListItem(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-
-                // Dropdown menu
                 DropdownMenu(
                     expanded = showMenu,
                     onDismissRequest = { showMenu = false },
@@ -2830,7 +2844,6 @@ fun ChannelListItem(
                         .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                         .padding(vertical = 4.dp)
                 ) {
-                    // Pin/Unpin option
                     DropdownMenuItem(
                         text = {
                             Row(
@@ -2854,13 +2867,10 @@ fun ChannelListItem(
                         },
                         leadingIcon = {}
                     )
-
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 4.dp),
                         color = MaterialTheme.colorScheme.outlineVariant
                     )
-
-                    // Mute/Unmute option
                     DropdownMenuItem(
                         text = {
                             Row(
@@ -2868,7 +2878,7 @@ fun ChannelListItem(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Icon(
-                                    imageVector = if (channel.isMuted) Icons.AutoMirrored.Filled.  VolumeUp else Icons.Default.VolumeOff,
+                                    imageVector = if (channel.isMuted) Icons.AutoMirrored.Filled.VolumeUp else Icons.Default.VolumeOff,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.onSurface
                                 )
@@ -2884,8 +2894,6 @@ fun ChannelListItem(
                         },
                         leadingIcon = {}
                     )
-
-                    // View Channel Info option
                     DropdownMenuItem(
                         text = {
                             Row(
