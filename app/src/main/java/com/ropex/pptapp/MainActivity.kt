@@ -37,6 +37,12 @@ import org.webrtc.PeerConnection
 import org.webrtc.SessionDescription
 import com.ropex.pptapp.Constants
 import com.ropex.pptapp.mediasoup.AndroidMediasoupController
+import com.ropex.pptapp.config.AudioConfig
+import com.ropex.pptapp.config.AudioRoute
+import com.ropex.pptapp.config.VolumeStream
+import com.ropex.pptapp.config.DeviceProfileRegistry
+import com.ropex.pptapp.config.toAndroidStream
+import com.ropex.pptapp.PTTManager
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -138,6 +144,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var webRTCManager: WebRTCManager
     private lateinit var androidMediasoupController: AndroidMediasoupController
     private lateinit var httpClient: OkHttpClient
+    private lateinit var pttManager: PTTManager
 
     private var deviceId: String? = null
     private var companyId: String? = null
@@ -151,6 +158,8 @@ class MainActivity : ComponentActivity() {
     private var activeSessionType by mutableStateOf<String?>(null)
     private var currentSpeakerId by mutableStateOf<String?>(null)
     private var talkSegmentIndex by mutableStateOf(1)
+    private var audioConfig by mutableStateOf(DeviceProfileRegistry.defaultConfig())
+    private var showAudioSettings by mutableStateOf(false)
 
     // Coroutine scope for UI updates
     private val uiScope = CoroutineScope(Dispatchers.Main)
@@ -193,6 +202,7 @@ class MainActivity : ComponentActivity() {
         androidMediasoupController.initialize(this)
 
         httpClient = OkHttpClient()
+        pttManager = PTTManager(this)
 
         runCatching {
             val prefs = getSharedPreferences("pptapp", MODE_PRIVATE)
@@ -224,7 +234,7 @@ class MainActivity : ComponentActivity() {
                         onPasswordChange = { passwordInput = it },
                         onLogin = { attemptLogin(companyIdInput, accountNumberInput, passwordInput) }
                     )
-                } else if (roomId.isEmpty()) {
+                } else if (roomId.isEmpty() && !showAudioSettings) {
                     MainTabbedScreen(
                         selectedTabIndex = selectedTabIndex,
                         onSelectTab = { selectedTabIndex = it },
@@ -237,6 +247,7 @@ class MainActivity : ComponentActivity() {
                         onToggleSettingsMenu = { showSettingsMenu = !showSettingsMenu },
                         onLogout = { performLogout() },
                         onToggleSpeaker = { toggleSpeaker() },
+                        onOpenAudioSettings = { showAudioSettings = true },
                         onContactClick = { device ->
                             uiScope.launch { startDirectContact(device.id, device.displayName) }
                         },
@@ -254,7 +265,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onDeleteRecent = { item -> removeRecent(item) }
                     )
-                } else {
+                } else if (!showAudioSettings) {
                     TalkScreen(
                         title = activeSessionName ?: "",
                         isTransmitting = isTransmitting,
@@ -275,6 +286,7 @@ class MainActivity : ComponentActivity() {
                         onPTTPressed = {
                             if (hasPermission && isConnectedToServer && roomId.isNotEmpty()) {
                                 uiScope.launch {
+                                    pttManager.onPTTPressed()
                                     isTransmitting = true
                                     currentSpeaker = "You"
                                     currentSpeakerId = userId
@@ -288,6 +300,7 @@ class MainActivity : ComponentActivity() {
                         onPTTReleased = {
                             uiScope.launch {
                                 if (isTransmitting) {
+                                    pttManager.onPTTReleased()
                                     isTransmitting = false
                                     currentSpeaker = null
                                     currentSpeakerId = null
@@ -295,6 +308,86 @@ class MainActivity : ComponentActivity() {
                                     signalingClient.stopSpeaking(roomId, userId)
                                 }
                             }
+                        }
+                    )
+                } else {
+                    AudioSettingsScreen(
+                        audioConfig = audioConfig,
+                        isTransmitting = isTransmitting,
+                        onBack = { showAudioSettings = false },
+                        onResetDefaults = {
+                            val cfg = DeviceProfileRegistry.defaultConfig()
+                            audioConfig = cfg
+                            applyRxRouting()
+                            applyWebRTCAudioConfig()
+                            pttManager.setBeepConfig(cfg.beep.stream, cfg.beep.volumeFraction, cfg.beep.enabled)
+                        },
+                        onChangeRxRoute = {
+                            audioConfig = audioConfig.copy(rxRoute = it)
+                            applyRxRouting()
+                        },
+                        onChangeTxRoute = {
+                            audioConfig = audioConfig.copy(txRoute = it)
+                            if (isTransmitting) applyTxRouting()
+                        },
+                        onChangeVolumeStream = {
+                            audioConfig = audioConfig.copy(volumeStream = it)
+                            if (isTransmitting) applyTxRouting() else applyRxRouting()
+                        },
+                        onChangeRxVolume = {
+                            audioConfig = audioConfig.copy(rxVolumeFraction = it)
+                            applyRxRouting()
+                        },
+                        onChangeTxVolume = {
+                            audioConfig = audioConfig.copy(txVolumeFraction = it)
+                            if (isTransmitting) applyTxRouting()
+                        },
+                        onChangeMicSource = {
+                            audioConfig = audioConfig.copy(micSource = it)
+                            applyWebRTCAudioConfig()
+                        },
+                        onChangeAEC = {
+                            audioConfig = audioConfig.copy(hardwareAEC = it)
+                            applyWebRTCAudioConfig()
+                        },
+                        onChangeNS = {
+                            audioConfig = audioConfig.copy(hardwareNS = it)
+                            applyWebRTCAudioConfig()
+                        },
+                        onChangeAGC = {
+                            audioConfig = audioConfig.copy(agcConstraint = it)
+                            applyWebRTCAudioConfig()
+                        },
+                        onChangeHighpass = {
+                            audioConfig = audioConfig.copy(highpassFilter = it)
+                            applyWebRTCAudioConfig()
+                        },
+                        onChangeBeepEnabled = {
+                            val cfg = audioConfig.copy(beep = audioConfig.beep.copy(enabled = it))
+                            audioConfig = cfg
+                            pttManager.setBeepConfig(cfg.beep.stream, cfg.beep.volumeFraction, cfg.beep.enabled)
+                        },
+                        onChangeBeepStream = {
+                            val cfg = audioConfig.copy(beep = audioConfig.beep.copy(stream = it))
+                            audioConfig = cfg
+                            pttManager.setBeepConfig(cfg.beep.stream, cfg.beep.volumeFraction, cfg.beep.enabled)
+                        },
+                        onChangeBeepVolume = {
+                            val cfg = audioConfig.copy(beep = audioConfig.beep.copy(volumeFraction = it))
+                            audioConfig = cfg
+                            pttManager.setBeepConfig(cfg.beep.stream, cfg.beep.volumeFraction, cfg.beep.enabled)
+                        },
+                        onChangeLatch = {
+                            audioConfig = audioConfig.copy(ptt = audioConfig.ptt.copy(longPressLatch = it))
+                        },
+                        onChangeThreshold = {
+                            audioConfig = audioConfig.copy(ptt = audioConfig.ptt.copy(longPressThresholdMs = it))
+                        },
+                        onChangePreferBluetooth = {
+                            audioConfig = audioConfig.copy(accessory = audioConfig.accessory.copy(preferBluetooth = it))
+                        },
+                        onChangePreferWired = {
+                            audioConfig = audioConfig.copy(accessory = audioConfig.accessory.copy(preferWiredHeadset = it))
                         }
                     )
                 }
@@ -305,9 +398,41 @@ class MainActivity : ComponentActivity() {
         if (hasPermission) {
             setupAudio()
             initializeWebRTC()
+            pttManager.setBeepConfig(audioConfig.beep.stream, audioConfig.beep.volumeFraction, audioConfig.beep.enabled)
         } else {
             requestAudioPermission()
         }
+    }
+
+    private fun setVolumeFraction(stream: VolumeStream, f: Float) {
+        try {
+            val maxVolume = audioManager.getStreamMaxVolume(stream.toAndroidStream())
+            val vol = max(1, min(maxVolume, (maxVolume * f).toInt()))
+            audioManager.setStreamVolume(stream.toAndroidStream(), vol, 0)
+        } catch (_: Exception) {}
+    }
+
+    private fun applyRxRouting() {
+        try {
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager.setSpeakerphoneOn(audioConfig.rxRoute == AudioRoute.SPEAKER)
+            setVolumeFraction(audioConfig.volumeStream, audioConfig.rxVolumeFraction)
+        } catch (_: Exception) {}
+    }
+
+    private fun applyTxRouting() {
+        try {
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager.setSpeakerphoneOn(audioConfig.txRoute == AudioRoute.SPEAKER)
+            setVolumeFraction(audioConfig.volumeStream, audioConfig.txVolumeFraction)
+        } catch (_: Exception) {}
+    }
+
+    private fun applyWebRTCAudioConfig() {
+        val iceServers = Constants.WebRTC.ICE_SERVERS.map { serverUrl ->
+            PeerConnection.IceServer.builder(serverUrl).createIceServer()
+        }
+        webRTCManager.applyAudioConfig(audioConfig, iceServers)
     }
 
     private fun initializeWebRTC() {
@@ -396,13 +521,8 @@ class MainActivity : ComponentActivity() {
 
     private fun setupAudio() {
         try {
-            // Configure audio for voice communication
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-            audioManager.setSpeakerphoneOn(true)
-
-            setVoiceCallVolumeFraction(0.8f)
-
-            Log.d("PTT", "Audio setup complete: mode=MODE_IN_COMMUNICATION, speakerphone=ON")
+            applyRxRouting()
+            Log.d("PTT", "Audio setup complete")
 
         } catch (e: Exception) {
             Log.e("PTT", "Audio setup failed", e)
@@ -411,8 +531,7 @@ class MainActivity : ComponentActivity() {
 
     private fun startTransmitting() {
         try {
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-            audioManager.setSpeakerphoneOn(false)
+            applyTxRouting()
         } catch (_: Exception) {}
         androidMediasoupController.setConsumersEnabled(false)
         signalingClient.pauseConsumer()
@@ -429,9 +548,7 @@ class MainActivity : ComponentActivity() {
 
         // Change audio mode back
         try {
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-            audioManager.setSpeakerphoneOn(true)
-            setVoiceCallVolumeFraction(0.9f)
+            applyRxRouting()
             Log.d("PTT", "Stopped transmitting")
         } catch (e: Exception) {
             Log.e("PTT", "Stop transmitting failed", e)
@@ -440,14 +557,7 @@ class MainActivity : ComponentActivity() {
         signalingClient.resumeConsumer()
     }
 
-    private fun setVoiceCallVolumeFraction(f: Float) {
-        try {
-            val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
-            val vol = max(1, min(maxVolume, (maxVolume * f).toInt()))
-            audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, vol, 0)
-            Log.d("PTT", "VOICE_CALL volume set: $vol/$maxVolume")
-        } catch (_: Exception) {}
-    }
+    private fun setVoiceCallVolumeFraction(f: Float) {}
 
     private fun showToast(message: String) {
         runOnUiThread {
@@ -918,7 +1028,7 @@ class MainActivity : ComponentActivity() {
             val isSpeakerOn = audioManager.isSpeakerphoneOn
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             audioManager.setSpeakerphoneOn(!isSpeakerOn)
-            setVoiceCallVolumeFraction(if (!isSpeakerOn) 0.9f else 0.6f)
+            setVolumeFraction(audioConfig.volumeStream, if (!isSpeakerOn) audioConfig.rxVolumeFraction else audioConfig.txVolumeFraction)
             showToast(if (!isSpeakerOn) "Speaker ON" else "Speaker OFF")
         }
     }
@@ -1001,6 +1111,7 @@ class MainActivity : ComponentActivity() {
                 if (hasPermission && isConnectedToServer && roomId.isNotEmpty()) {
                     uiScope.launch {
                         if (!isTransmitting) {
+                            pttManager.onPTTPressed()
                             isTransmitting = true
                             currentSpeaker = "You"
                             startTransmitting()
@@ -1022,15 +1133,16 @@ class MainActivity : ComponentActivity() {
         return when (keyCode) {
             KeyEvent.KEYCODE_VOLUME_DOWN -> {
                 val duration = System.currentTimeMillis() - volumeDownPressStart
-                val isLongPress = duration >= longPressThresholdMs
+                val isLongPress = duration >= audioConfig.ptt.longPressThresholdMs
                 if (hasPermission && isConnectedToServer && roomId.isNotEmpty()) {
                     uiScope.launch {
-                        val shouldStop = if (isLongPress) {
-                            !wasTransmittingBeforePress
+                        val shouldStop = if (audioConfig.ptt.longPressLatch) {
+                            if (isLongPress) !wasTransmittingBeforePress else wasTransmittingBeforePress
                         } else {
-                            wasTransmittingBeforePress
+                            true
                         }
                         if (shouldStop && isTransmitting) {
+                            pttManager.onPTTReleased()
                             isTransmitting = false
                             currentSpeaker = null
                             stopTransmitting()
@@ -1079,6 +1191,7 @@ fun MainTabbedScreen(
     onToggleSettingsMenu: () -> Unit,
     onLogout: () -> Unit,
     onToggleSpeaker: () -> Unit,
+    onOpenAudioSettings: () -> Unit,
     onContactClick: (DeviceItem) -> Unit,
     onChannelClick: (ChannelItem) -> Unit,
     onRecentClick: (RecentItem) -> Unit,
@@ -1167,6 +1280,13 @@ fun MainTabbedScreen(
                                 }
                             )
                             DropdownMenuItem(
+                                text = { Text("Audio & PTT Settings") },
+                                onClick = {
+                                    onToggleSettingsMenu()
+                                    onOpenAudioSettings()
+                                }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Logout") },
                                 onClick = {
                                     onToggleSettingsMenu()
@@ -1248,6 +1368,274 @@ fun MainTabbedScreen(
                         channels = channels,
                         onChannelClick = onChannelClick
                     )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AudioSettingsScreen(
+    audioConfig: AudioConfig,
+    isTransmitting: Boolean,
+    onBack: () -> Unit,
+    onResetDefaults: () -> Unit,
+    onChangeRxRoute: (AudioRoute) -> Unit,
+    onChangeTxRoute: (AudioRoute) -> Unit,
+    onChangeVolumeStream: (VolumeStream) -> Unit,
+    onChangeRxVolume: (Float) -> Unit,
+    onChangeTxVolume: (Float) -> Unit,
+    onChangeMicSource: (com.ropex.pptapp.config.MicSource) -> Unit,
+    onChangeAEC: (Boolean) -> Unit,
+    onChangeNS: (Boolean) -> Unit,
+    onChangeAGC: (Boolean) -> Unit,
+    onChangeHighpass: (Boolean) -> Unit,
+    onChangeBeepEnabled: (Boolean) -> Unit,
+    onChangeBeepStream: (VolumeStream) -> Unit,
+    onChangeBeepVolume: (Float) -> Unit,
+    onChangeLatch: (Boolean) -> Unit,
+    onChangeThreshold: (Int) -> Unit,
+    onChangePreferBluetooth: (Boolean) -> Unit,
+    onChangePreferWired: (Boolean) -> Unit,
+) {
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        val isCompact = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 360
+        val pad = if (isCompact) 12.dp else 16.dp
+        val space = if (isCompact) 8.dp else 16.dp
+        Column(modifier = Modifier.fillMaxSize()) {
+            TopAppBar(title = { Text("Audio & PTT Settings") }, navigationIcon = {
+                IconButton(onClick = onBack) { Icon(Icons.Rounded.ChevronRight, contentDescription = "Back") }
+            })
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(pad),
+                verticalArrangement = Arrangement.spacedBy(space)
+            ) {
+                item {
+                    Card { Column(Modifier.padding(pad), verticalArrangement = Arrangement.spacedBy(space)) {
+                        Text("Routing")
+                        if (isCompact) {
+                            Column(verticalArrangement = Arrangement.spacedBy(space)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.rxRoute == AudioRoute.SPEAKER, onClick = { onChangeRxRoute(AudioRoute.SPEAKER) })
+                                    Text("RX: Speaker")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.rxRoute == AudioRoute.EARPIECE, onClick = { onChangeRxRoute(AudioRoute.EARPIECE) })
+                                    Text("RX: Earpiece")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.txRoute == AudioRoute.SPEAKER, onClick = { onChangeTxRoute(AudioRoute.SPEAKER) })
+                                    Text("TX: Speaker")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.txRoute == AudioRoute.EARPIECE, onClick = { onChangeTxRoute(AudioRoute.EARPIECE) })
+                                    Text("TX: Earpiece")
+                                }
+                            }
+                        } else {
+                            Row(horizontalArrangement = Arrangement.spacedBy(space)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.rxRoute == AudioRoute.SPEAKER, onClick = { onChangeRxRoute(AudioRoute.SPEAKER) })
+                                    Text("Receive: Speaker")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.rxRoute == AudioRoute.EARPIECE, onClick = { onChangeRxRoute(AudioRoute.EARPIECE) })
+                                    Text("Receive: Earpiece")
+                                }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(space)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.txRoute == AudioRoute.SPEAKER, onClick = { onChangeTxRoute(AudioRoute.SPEAKER) })
+                                    Text("Transmit: Speaker")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.txRoute == AudioRoute.EARPIECE, onClick = { onChangeTxRoute(AudioRoute.EARPIECE) })
+                                    Text("Transmit: Earpiece")
+                                }
+                            }
+                        }
+                    } }
+                }
+                item {
+                    Card { Column(Modifier.padding(pad), verticalArrangement = Arrangement.spacedBy(space)) {
+                        Text("Volumes")
+                        if (isCompact) {
+                            Column(verticalArrangement = Arrangement.spacedBy(space)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.volumeStream == VolumeStream.VOICE_CALL, onClick = { onChangeVolumeStream(VolumeStream.VOICE_CALL) })
+                                    Text("Stream: Voice Call")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.volumeStream == VolumeStream.MUSIC, onClick = { onChangeVolumeStream(VolumeStream.MUSIC) })
+                                    Text("Stream: Music")
+                                }
+                            }
+                        } else {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(space)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.volumeStream == VolumeStream.VOICE_CALL, onClick = { onChangeVolumeStream(VolumeStream.VOICE_CALL) })
+                                    Text("Voice Call")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.volumeStream == VolumeStream.MUSIC, onClick = { onChangeVolumeStream(VolumeStream.MUSIC) })
+                                    Text("Music")
+                                }
+                            }
+                        }
+                        Column { Text("Receive ${(audioConfig.rxVolumeFraction * 100).toInt()}%")
+                            Slider(value = audioConfig.rxVolumeFraction, onValueChange = { onChangeRxVolume(it) }, valueRange = 0.1f..1.0f) }
+                        Column { Text("Transmit ${(audioConfig.txVolumeFraction * 100).toInt()}%")
+                            Slider(value = audioConfig.txVolumeFraction, onValueChange = { onChangeTxVolume(it) }, valueRange = 0.1f..1.0f) }
+                    } }
+                }
+                item {
+                    Card { Column(Modifier.padding(pad), verticalArrangement = Arrangement.spacedBy(space)) {
+                        Text("Microphone")
+                        if (isCompact) {
+                            Column(verticalArrangement = Arrangement.spacedBy(space)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.micSource == com.ropex.pptapp.config.MicSource.VOICE_COMMUNICATION, onClick = { onChangeMicSource(com.ropex.pptapp.config.MicSource.VOICE_COMMUNICATION) })
+                                    Text("Source: Voice Comm")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.micSource == com.ropex.pptapp.config.MicSource.MIC, onClick = { onChangeMicSource(com.ropex.pptapp.config.MicSource.MIC) })
+                                    Text("Source: Mic")
+                                }
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(space)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(checked = audioConfig.hardwareAEC, onCheckedChange = { onChangeAEC(it) })
+                                    Text("Hardware AEC")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(checked = audioConfig.hardwareNS, onCheckedChange = { onChangeNS(it) })
+                                    Text("Hardware NS")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(checked = audioConfig.agcConstraint, onCheckedChange = { onChangeAGC(it) })
+                                    Text("AGC")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(checked = audioConfig.highpassFilter, onCheckedChange = { onChangeHighpass(it) })
+                                    Text("Highpass Filter")
+                                }
+                            }
+                        } else {
+                            Row(horizontalArrangement = Arrangement.spacedBy(space)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.micSource == com.ropex.pptapp.config.MicSource.VOICE_COMMUNICATION, onClick = { onChangeMicSource(com.ropex.pptapp.config.MicSource.VOICE_COMMUNICATION) })
+                                    Text("Voice Comm")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.micSource == com.ropex.pptapp.config.MicSource.MIC, onClick = { onChangeMicSource(com.ropex.pptapp.config.MicSource.MIC) })
+                                    Text("Mic")
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(space)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(checked = audioConfig.hardwareAEC, onCheckedChange = { onChangeAEC(it) })
+                                    Text("Hardware AEC")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(checked = audioConfig.hardwareNS, onCheckedChange = { onChangeNS(it) })
+                                    Text("Hardware NS")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(checked = audioConfig.agcConstraint, onCheckedChange = { onChangeAGC(it) })
+                                    Text("AGC")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(checked = audioConfig.highpassFilter, onCheckedChange = { onChangeHighpass(it) })
+                                    Text("Highpass Filter")
+                                }
+                            }
+                        }
+                    } }
+                }
+                item {
+                    Card { Column(Modifier.padding(pad), verticalArrangement = Arrangement.spacedBy(space)) {
+                        Text("Beeps")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Switch(checked = audioConfig.beep.enabled, onCheckedChange = { onChangeBeepEnabled(it) })
+                            Spacer(Modifier.width(space))
+                            Text("Talk Permit")
+                        }
+                        if (isCompact) {
+                            Column(verticalArrangement = Arrangement.spacedBy(space)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.beep.stream == VolumeStream.VOICE_CALL, onClick = { onChangeBeepStream(VolumeStream.VOICE_CALL) })
+                                    Text("Stream: Voice Call")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.beep.stream == VolumeStream.MUSIC, onClick = { onChangeBeepStream(VolumeStream.MUSIC) })
+                                    Text("Stream: Music")
+                                }
+                            }
+                        } else {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(space)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.beep.stream == VolumeStream.VOICE_CALL, onClick = { onChangeBeepStream(VolumeStream.VOICE_CALL) })
+                                    Text("Voice Call Stream")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = audioConfig.beep.stream == VolumeStream.MUSIC, onClick = { onChangeBeepStream(VolumeStream.MUSIC) })
+                                    Text("Music Stream")
+                                }
+                            }
+                        }
+                        Column { Text("Beep ${(audioConfig.beep.volumeFraction * 100).toInt()}%")
+                            Slider(value = audioConfig.beep.volumeFraction, onValueChange = { onChangeBeepVolume(it) }, valueRange = 0.1f..1.0f) }
+                    } }
+                }
+                item {
+                    Card { Column(Modifier.padding(pad), verticalArrangement = Arrangement.spacedBy(space)) {
+                        Text("PTT")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Switch(checked = audioConfig.ptt.longPressLatch, onCheckedChange = { onChangeLatch(it) })
+                            Spacer(Modifier.width(space))
+                            Text("Long-Press Latch")
+                        }
+                        Column { Text("Threshold ${audioConfig.ptt.longPressThresholdMs} ms")
+                            Slider(value = audioConfig.ptt.longPressThresholdMs.toFloat(), onValueChange = { onChangeThreshold(it.toInt()) }, valueRange = 200f..1000f) }
+                    } }
+                }
+                item {
+                    Card { Column(Modifier.padding(pad), verticalArrangement = Arrangement.spacedBy(space)) {
+                        Text("Accessories")
+                        if (isCompact) {
+                            Column(verticalArrangement = Arrangement.spacedBy(space)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(checked = audioConfig.accessory.preferBluetooth, onCheckedChange = { onChangePreferBluetooth(it) })
+                                    Spacer(Modifier.width(space))
+                                    Text("Prefer Bluetooth")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(checked = audioConfig.accessory.preferWiredHeadset, onCheckedChange = { onChangePreferWired(it) })
+                                    Spacer(Modifier.width(space))
+                                    Text("Prefer Wired Headset")
+                                }
+                            }
+                        } else {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(space)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(checked = audioConfig.accessory.preferBluetooth, onCheckedChange = { onChangePreferBluetooth(it) })
+                                    Text("Prefer Bluetooth")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(checked = audioConfig.accessory.preferWiredHeadset, onCheckedChange = { onChangePreferWired(it) })
+                                    Text("Prefer Wired Headset")
+                                }
+                            }
+                        }
+                    } }
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(space)) {
+                        Button(onClick = onResetDefaults) { Text("Reset to Defaults") }
+                        Button(onClick = onBack) { Text("Back") }
+                    }
                 }
             }
         }

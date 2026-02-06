@@ -1,4 +1,4 @@
-package com.ropex.pptapp.ptt
+package com.ropex.pptapp
 
 import android.content.Context
 import android.media.AudioManager
@@ -6,6 +6,7 @@ import android.media.ToneGenerator
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import com.ropex.pptapp.config.VolumeStream
 
 class PTTManager(private val context: Context) {
 
@@ -14,9 +15,10 @@ class PTTManager(private val context: Context) {
     }
 
 
-    private val toneGenerator: ToneGenerator by lazy {
-        ToneGenerator(AudioManager.STREAM_MUSIC, 100)
-    }
+    private var beepStream: Int = AudioManager.STREAM_MUSIC
+    private var beepVolume: Int = 100
+    private var talkPermitEnabled: Boolean = true
+    private var toneGenerator: ToneGenerator = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
 
     // Use StateFlow instead of LiveData
     private val _isTransmitting = MutableStateFlow(false)
@@ -43,7 +45,6 @@ class PTTManager(private val context: Context) {
         }
 
     fun onPTTPressed() {
-        updateAudioRouting()
         Log.d("PTT", "PTT button pressed")
 
         if (currentChannelId == null || currentUserId == null) {
@@ -112,10 +113,12 @@ class PTTManager(private val context: Context) {
     }
 
     private fun playStartTone() {
+        if (!talkPermitEnabled) return
         toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP, 100)
     }
 
     private fun playStopTone() {
+        if (!talkPermitEnabled) return
         toneGenerator.startTone(ToneGenerator.TONE_PROP_BEEP2, 100)
     }
 
@@ -129,5 +132,14 @@ class PTTManager(private val context: Context) {
 
     fun release() {
         toneGenerator.release()
+    }
+
+    fun setBeepConfig(stream: VolumeStream, fraction: Float, enabled: Boolean) {
+        val s = if (stream == VolumeStream.VOICE_CALL) AudioManager.STREAM_VOICE_CALL else AudioManager.STREAM_MUSIC
+        beepStream = s
+        beepVolume = kotlin.math.max(1, kotlin.math.min(100, (fraction * 100f).toInt()))
+        talkPermitEnabled = enabled
+        toneGenerator.release()
+        toneGenerator = ToneGenerator(beepStream, beepVolume)
     }
 }

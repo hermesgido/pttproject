@@ -7,6 +7,8 @@ import org.webrtc.audio.JavaAudioDeviceModule
 import org.webrtc.audio.AudioDeviceModule
 import java.util.concurrent.Executors
 import com.ropex.pptapp.Constants
+import com.ropex.pptapp.config.AudioConfig
+import com.ropex.pptapp.config.MicSource
 
 class WebRTCManager(
     private val context: Context,
@@ -20,6 +22,12 @@ class WebRTCManager(
     private var audioSource: AudioSource? = null
     private var audioDeviceModule: AudioDeviceModule? = null
     private var isTransmittingFlag: Boolean = false
+
+    private var cfgHardwareAEC: Boolean = false
+    private var cfgHardwareNS: Boolean = true
+    private var cfgAudioSource: Int = android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION
+    private var cfgAgcConstraint: Boolean = false
+    private var cfgHighpassFilter: Boolean = true
 
     private var isInitialized = false
     private var isConnected = false
@@ -52,9 +60,9 @@ class WebRTCManager(
 
 
                 audioDeviceModule = JavaAudioDeviceModule.builder(context)
-                    .setUseHardwareAcousticEchoCanceler(false)
-                    .setUseHardwareNoiseSuppressor(true)
-                    .setAudioSource(android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+                    .setUseHardwareAcousticEchoCanceler(cfgHardwareAEC)
+                    .setUseHardwareNoiseSuppressor(cfgHardwareNS)
+                    .setAudioSource(cfgAudioSource)
                     .createAudioDeviceModule()
 
                 val factoryOptions = PeerConnectionFactory.Options()
@@ -180,8 +188,8 @@ class WebRTCManager(
             try {
                 val audioConstraints = MediaConstraints().apply {
                     mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-                    mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "false"))
-                    mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", if (cfgAgcConstraint) "true" else "false"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", if (cfgHighpassFilter) "true" else "false"))
                     mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
                 }
 
@@ -197,8 +205,8 @@ class WebRTCManager(
                 try {
                     val fallbackConstraints = MediaConstraints().apply {
                         mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-                        mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "false"))
-                        mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+                        mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", if (cfgAgcConstraint) "true" else "false"))
+                        mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", if (cfgHighpassFilter) "true" else "false"))
                         mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
                     }
                     audioSource = peerConnectionFactory.createAudioSource(fallbackConstraints)
@@ -276,7 +284,7 @@ class WebRTCManager(
                 Log.e("WebRTC", "Cleanup failed", e)
             }
         }
-        executor.shutdown()
+        
     }
 
     fun isReady(): Boolean = isInitialized && isConnected
@@ -292,4 +300,61 @@ class WebRTCManager(
     }
 
     fun getLocalAudioTrack(): AudioTrack? = if (::localAudioTrack.isInitialized) localAudioTrack else null
+
+    fun configureFor(config: AudioConfig) {
+        cfgHardwareAEC = config.hardwareAEC
+        cfgHardwareNS = config.hardwareNS
+        cfgAudioSource = when (config.micSource) {
+            MicSource.VOICE_COMMUNICATION -> android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION
+            MicSource.MIC -> android.media.MediaRecorder.AudioSource.MIC
+        }
+        cfgAgcConstraint = config.agcConstraint
+        cfgHighpassFilter = config.highpassFilter
+    }
+
+    fun applyAudioConfig(config: AudioConfig, iceServers: List<PeerConnection.IceServer>) {
+        executor.execute {
+            try {
+                configureFor(config)
+                try {
+                    audioSource?.dispose()
+                } catch (_: Throwable) {}
+                try {
+                    audioDeviceModule?.release()
+                } catch (_: Throwable) {}
+                try {
+                    if (::peerConnection.isInitialized) peerConnection.close()
+                } catch (_: Throwable) {}
+                try {
+                    if (::peerConnectionFactory.isInitialized) peerConnectionFactory.dispose()
+                } catch (_: Throwable) {}
+                isConnected = false
+                isInitialized = false
+                val options = PeerConnectionFactory.InitializationOptions.builder(context)
+                    .setFieldTrials("WebRTC-IntelVP8/Enabled/")
+                    .setEnableInternalTracer(true)
+                    .createInitializationOptions()
+                PeerConnectionFactory.initialize(options)
+                Logging.enableLogToDebugOutput(Logging.Severity.LS_VERBOSE)
+                audioDeviceModule = JavaAudioDeviceModule.builder(context)
+                    .setUseHardwareAcousticEchoCanceler(cfgHardwareAEC)
+                    .setUseHardwareNoiseSuppressor(cfgHardwareNS)
+                    .setAudioSource(cfgAudioSource)
+                    .createAudioDeviceModule()
+                val factoryOptions = PeerConnectionFactory.Options()
+                peerConnectionFactory = PeerConnectionFactory.builder()
+                    .setOptions(factoryOptions)
+                    .setAudioDeviceModule(audioDeviceModule)
+                    .setVideoEncoderFactory(DefaultVideoEncoderFactory(null, false, false))
+                    .setVideoDecoderFactory(DefaultVideoDecoderFactory(null))
+                    .createPeerConnectionFactory()
+                isInitialized = true
+                createPeerConnection(iceServers)
+                createLocalAudioTrack()
+            } catch (e: Exception) {
+                Log.e("WebRTC", "Apply audio config failed", e)
+                signalingListener.onError("Apply audio config failed: ${e.message}")
+            }
+        }
+    }
 }
