@@ -1029,7 +1029,15 @@ class MainActivity : ComponentActivity() {
             val isSpeakerOn = audioManager.isSpeakerphoneOn
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             audioManager.setSpeakerphoneOn(!isSpeakerOn)
-            setVolumeFraction(audioConfig.volumeStream, if (!isSpeakerOn) audioConfig.rxVolumeFraction else audioConfig.txVolumeFraction)
+            audioConfig = if (isTransmitting) {
+                audioConfig.copy(txRoute = if (!isSpeakerOn) AudioRoute.SPEAKER else AudioRoute.EARPIECE)
+            } else {
+                audioConfig.copy(rxRoute = if (!isSpeakerOn) AudioRoute.SPEAKER else AudioRoute.EARPIECE)
+            }
+            setVolumeFraction(
+                audioConfig.volumeStream,
+                if (!isSpeakerOn) audioConfig.rxVolumeFraction else audioConfig.txVolumeFraction
+            )
             showToast(if (!isSpeakerOn) "Speaker ON" else "Speaker OFF")
         }
     }
@@ -1273,13 +1281,7 @@ fun MainTabbedScreen(
                                 enabled = false
                             )
                             HorizontalDivider()
-                            DropdownMenuItem(
-                                text = { Text("Toggle Speaker") },
-                                onClick = {
-                                    onToggleSettingsMenu()
-                                    onToggleSpeaker()
-                                }
-                            )
+                            
                             DropdownMenuItem(
                                 text = { Text("Audio & PTT Settings") },
                                 onClick = {
