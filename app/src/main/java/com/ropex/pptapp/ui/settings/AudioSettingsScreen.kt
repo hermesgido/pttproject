@@ -2,18 +2,29 @@ package com.ropex.pptapp.ui.settings
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.focusable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import android.view.KeyEvent
 import com.ropex.pptapp.config.AudioConfig
 import com.ropex.pptapp.config.AudioRoute
 import com.ropex.pptapp.config.VolumeStream
 import com.ropex.pptapp.config.MicSource
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,10 +66,14 @@ fun AudioSettingsScreen(
             )
         }
     ) { paddingValues ->
+        val listState = rememberLazyListState()
+        var volumeFocus by remember { mutableStateOf(0) }
+        val scope = rememberCoroutineScope()
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues),
+            state = listState,
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -66,31 +81,31 @@ fun AudioSettingsScreen(
             item {
                 SettingsSection(title = "Audio Routing") {
                     SettingItem(label = "Receive Audio") {
-                        SegmentedButtonRow {
-                            SegmentedButton(
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            RadioRow(
+                                text = "Speaker",
                                 selected = audioConfig.rxRoute == AudioRoute.SPEAKER,
-                                onClick = { onChangeRxRoute(AudioRoute.SPEAKER) },
-                                label = "Speaker"
+                                onSelect = { onChangeRxRoute(AudioRoute.SPEAKER) }
                             )
-                            SegmentedButton(
+                            RadioRow(
+                                text = "Earpiece",
                                 selected = audioConfig.rxRoute == AudioRoute.EARPIECE,
-                                onClick = { onChangeRxRoute(AudioRoute.EARPIECE) },
-                                label = "Earpiece"
+                                onSelect = { onChangeRxRoute(AudioRoute.EARPIECE) }
                             )
                         }
                     }
                     
                     SettingItem(label = "Transmit Audio") {
-                        SegmentedButtonRow {
-                            SegmentedButton(
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            RadioRow(
+                                text = "Speaker",
                                 selected = audioConfig.txRoute == AudioRoute.SPEAKER,
-                                onClick = { onChangeTxRoute(AudioRoute.SPEAKER) },
-                                label = "Speaker"
+                                onSelect = { onChangeTxRoute(AudioRoute.SPEAKER) }
                             )
-                            SegmentedButton(
+                            RadioRow(
+                                text = "Earpiece",
                                 selected = audioConfig.txRoute == AudioRoute.EARPIECE,
-                                onClick = { onChangeTxRoute(AudioRoute.EARPIECE) },
-                                label = "Earpiece"
+                                onSelect = { onChangeTxRoute(AudioRoute.EARPIECE) }
                             )
                         }
                     }
@@ -101,16 +116,16 @@ fun AudioSettingsScreen(
             item {
                 SettingsSection(title = "Volume") {
                     SettingItem(label = "Volume Stream") {
-                        SegmentedButtonRow {
-                            SegmentedButton(
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            RadioRow(
+                                text = "Voice Call",
                                 selected = audioConfig.volumeStream == VolumeStream.VOICE_CALL,
-                                onClick = { onChangeVolumeStream(VolumeStream.VOICE_CALL) },
-                                label = "Voice Call"
+                                onSelect = { onChangeVolumeStream(VolumeStream.VOICE_CALL) }
                             )
-                            SegmentedButton(
+                            RadioRow(
+                                text = "Music",
                                 selected = audioConfig.volumeStream == VolumeStream.MUSIC,
-                                onClick = { onChangeVolumeStream(VolumeStream.MUSIC) },
-                                label = "Music"
+                                onSelect = { onChangeVolumeStream(VolumeStream.MUSIC) }
                             )
                         }
                     }
@@ -135,16 +150,16 @@ fun AudioSettingsScreen(
             item {
                 SettingsSection(title = "Microphone") {
                     SettingItem(label = "Audio Source") {
-                        SegmentedButtonRow {
-                            SegmentedButton(
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            RadioRow(
+                                text = "Voice Comm",
                                 selected = audioConfig.micSource == MicSource.VOICE_COMMUNICATION,
-                                onClick = { onChangeMicSource(MicSource.VOICE_COMMUNICATION) },
-                                label = "Voice Comm"
+                                onSelect = { onChangeMicSource(MicSource.VOICE_COMMUNICATION) }
                             )
-                            SegmentedButton(
+                            RadioRow(
+                                text = "Mic",
                                 selected = audioConfig.micSource == MicSource.MIC,
-                                onClick = { onChangeMicSource(MicSource.MIC) },
-                                label = "Mic"
+                                onSelect = { onChangeMicSource(MicSource.MIC) }
                             )
                         }
                     }
@@ -188,16 +203,16 @@ fun AudioSettingsScreen(
                     
                     if (audioConfig.beep.enabled) {
                         SettingItem(label = "Beep Stream") {
-                            SegmentedButtonRow {
-                                SegmentedButton(
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                RadioRow(
+                                    text = "Voice Call",
                                     selected = audioConfig.beep.stream == VolumeStream.VOICE_CALL,
-                                    onClick = { onChangeBeepStream(VolumeStream.VOICE_CALL) },
-                                    label = "Voice Call"
+                                    onSelect = { onChangeBeepStream(VolumeStream.VOICE_CALL) }
                                 )
-                                SegmentedButton(
+                                RadioRow(
+                                    text = "Music",
                                     selected = audioConfig.beep.stream == VolumeStream.MUSIC,
-                                    onClick = { onChangeBeepStream(VolumeStream.MUSIC) },
-                                    label = "Music"
+                                    onSelect = { onChangeBeepStream(VolumeStream.MUSIC) }
                                 )
                             }
                         }
@@ -343,6 +358,22 @@ private fun RowScope.SegmentedButton(
 }
 
 @Composable
+private fun RadioRow(
+    text: String,
+    selected: Boolean,
+    onSelect: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        RadioButton(selected = selected, onClick = onSelect)
+        Text(text, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+@Composable
 private fun SwitchSetting(
     label: String,
     checked: Boolean,
@@ -388,11 +419,34 @@ private fun SliderSetting(
     valueFormatter: (Float) -> String = { "${(it * 100).toInt()}%" }
 ) {
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusable()
+                .onKeyEvent {
+                    val action = it.nativeKeyEvent.action
+                    val keyCode = it.nativeKeyEvent.keyCode
+                    if (action == KeyEvent.ACTION_DOWN) {
+                        val step = 0.05f
+                        when (keyCode) {
+                            KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                val nv = (value - step).coerceIn(valueRange.start, valueRange.endInclusive)
+                                onValueChange(nv)
+                                true
+                            }
+                            KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                val nv = (value + step).coerceIn(valueRange.start, valueRange.endInclusive)
+                                onValueChange(nv)
+                                true
+                            }
+                            else -> false
+                        }
+                    } else false
+                },
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
