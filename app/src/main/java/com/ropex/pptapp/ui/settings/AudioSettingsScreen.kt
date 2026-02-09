@@ -17,8 +17,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.border
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import android.view.KeyEvent
 import com.ropex.pptapp.config.AudioConfig
 import com.ropex.pptapp.config.AudioRoute
@@ -69,10 +79,41 @@ fun AudioSettingsScreen(
         val listState = rememberLazyListState()
         var volumeFocus by remember { mutableStateOf(0) }
         val scope = rememberCoroutineScope()
+        var pendingFocusSectionIndex by remember { mutableStateOf<Int?>(null) }
+        LaunchedEffect(Unit) { pendingFocusSectionIndex = 0 }
+        val focusManager = LocalFocusManager.current
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues),
+                .padding(paddingValues)
+                .onPreviewKeyEvent {
+                    val action = it.nativeKeyEvent.action
+                    val keyCode = it.nativeKeyEvent.keyCode
+                    if (action == KeyEvent.ACTION_DOWN) {
+                        val current = listState.firstVisibleItemIndex
+                        when (keyCode) {
+                            KeyEvent.KEYCODE_DPAD_UP -> {
+                                val moved = focusManager.moveFocus(FocusDirection.Up)
+                                if (!moved) {
+                                    val target = maxOf(0, current - 1)
+                                    pendingFocusSectionIndex = target
+                                    scope.launch { listState.animateScrollToItem(target) }
+                                }
+                                true
+                            }
+                            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                val moved = focusManager.moveFocus(FocusDirection.Down)
+                                if (!moved) {
+                                    val target = current + 1
+                                    pendingFocusSectionIndex = target
+                                    scope.launch { listState.animateScrollToItem(target) }
+                                }
+                                true
+                            }
+                            else -> false
+                        }
+                    } else false
+                },
             state = listState,
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -80,12 +121,17 @@ fun AudioSettingsScreen(
             // Audio Routing Section
             item {
                 SettingsSection(title = "Audio Routing") {
+                    val shouldFocusRouting = pendingFocusSectionIndex == 0
+                    LaunchedEffect(shouldFocusRouting) {
+                        if (shouldFocusRouting) pendingFocusSectionIndex = null
+                    }
                     SettingItem(label = "Receive Audio") {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             RadioRow(
                                 text = "Speaker",
                                 selected = audioConfig.rxRoute == AudioRoute.SPEAKER,
-                                onSelect = { onChangeRxRoute(AudioRoute.SPEAKER) }
+                                onSelect = { onChangeRxRoute(AudioRoute.SPEAKER) },
+                                requestFocus = shouldFocusRouting
                             )
                             RadioRow(
                                 text = "Earpiece",
@@ -361,10 +407,36 @@ private fun RowScope.SegmentedButton(
 private fun RadioRow(
     text: String,
     selected: Boolean,
-    onSelect: () -> Unit
+    onSelect: () -> Unit,
+    requestFocus: Boolean = false
 ) {
+    val fr = remember { FocusRequester() }
+    var isFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(requestFocus) {
+        if (requestFocus) fr.requestFocus()
+    }
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .focusRequester(fr)
+            .focusable()
+            .onFocusChanged { isFocused = it.isFocused }
+            .onKeyEvent {
+                val action = it.nativeKeyEvent.action
+                val keyCode = it.nativeKeyEvent.keyCode
+                if (action == KeyEvent.ACTION_DOWN &&
+                    (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER)) {
+                    onSelect()
+                    true
+                } else false
+            }
+            .then(
+                if (isFocused) Modifier
+                    .background(Color.Red, RoundedCornerShape(8.dp))
+                    .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                else Modifier
+            )
+            .padding(4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -380,10 +452,29 @@ private fun SwitchSetting(
     onCheckedChange: (Boolean) -> Unit,
     description: String? = null
 ) {
+    var isFocused by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 56.dp),
+            .heightIn(min = 56.dp)
+            .focusable()
+            .onFocusChanged { isFocused = it.isFocused }
+            .onKeyEvent {
+                val action = it.nativeKeyEvent.action
+                val keyCode = it.nativeKeyEvent.keyCode
+                if (action == KeyEvent.ACTION_DOWN &&
+                    (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER)) {
+                    onCheckedChange(!checked)
+                    true
+                } else false
+            }
+            .then(
+                if (isFocused) Modifier
+                    .background(Color.Red, RoundedCornerShape(8.dp))
+                    .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                else Modifier
+            )
+            .padding(4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -423,10 +514,12 @@ private fun SliderSetting(
             .fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        var isFocused by remember { mutableStateOf(false) }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .focusable()
+                .onFocusChanged { isFocused = it.isFocused }
                 .onKeyEvent {
                     val action = it.nativeKeyEvent.action
                     val keyCode = it.nativeKeyEvent.keyCode
@@ -446,7 +539,14 @@ private fun SliderSetting(
                             else -> false
                         }
                     } else false
-                },
+                }
+                .then(
+                    if (isFocused) Modifier
+                        .background(Color.Red, RoundedCornerShape(8.dp))
+                        .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                    else Modifier
+                )
+                .padding(4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -465,7 +565,9 @@ private fun SliderSetting(
             value = value,
             onValueChange = onValueChange,
             valueRange = valueRange,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusable(false)
         )
     }
 }
