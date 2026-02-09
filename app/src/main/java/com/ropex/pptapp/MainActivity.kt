@@ -138,6 +138,35 @@ class MainActivity : ComponentActivity() {
     private var volumeDownPressStart: Long = 0L
     private var wasTransmittingBeforePress: Boolean = false
     private val longPressThresholdMs: Long = 350
+    private val pttKeyCodes = setOf(
+        KeyEvent.KEYCODE_VOLUME_DOWN,
+        KeyEvent.KEYCODE_F1,
+        KeyEvent.KEYCODE_F2,
+        KeyEvent.KEYCODE_F3,
+        KeyEvent.KEYCODE_F4,
+        KeyEvent.KEYCODE_F5,
+        KeyEvent.KEYCODE_F6,
+        KeyEvent.KEYCODE_F7,
+        KeyEvent.KEYCODE_F8,
+        KeyEvent.KEYCODE_F9,
+        KeyEvent.KEYCODE_F10,
+        KeyEvent.KEYCODE_F11,
+        KeyEvent.KEYCODE_F12,
+        KeyEvent.KEYCODE_HEADSETHOOK,
+        KeyEvent.KEYCODE_CALL,
+        KeyEvent.KEYCODE_BUTTON_L1,
+        KeyEvent.KEYCODE_BUTTON_R1
+    )
+    private val pttScanCodes = setOf(
+        284,
+        293,
+        300,
+        226,
+        231
+    )
+    private var learnedPttKeyCode: Int? = null
+    private var learnedPttScanCode: Int? = null
+    private var pttLearningEnabled: Boolean = true
 
     // Managers
     private lateinit var audioManager: AudioManager
@@ -204,6 +233,8 @@ class MainActivity : ComponentActivity() {
 
         httpClient = OkHttpClient()
         pttManager = PTTManager(this)
+
+        loadPttMapping()
 
         runCatching {
             val prefs = getSharedPreferences("pptapp", MODE_PRIVATE)
@@ -1113,58 +1144,110 @@ class MainActivity : ComponentActivity() {
     // Hardware PTT button support (Volume Down)
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         Log.d("PTT", "Key down: $keyCode")
-        return when (keyCode) {
-            KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                volumeDownPressStart = System.currentTimeMillis()
-                wasTransmittingBeforePress = isTransmitting
-                if (hasPermission && isConnectedToServer && roomId.isNotEmpty()) {
-                    uiScope.launch {
-                        if (!isTransmitting) {
-                            pttManager.onPTTPressed()
-                            isTransmitting = true
-                            currentSpeaker = "You"
-                            startTransmitting()
-                            signalingClient.requestSpeak(roomId, userId)
-                        }
+        maybeLearnPttKey(keyCode, event)
+        return if (isPttKey(keyCode, event)) {
+            volumeDownPressStart = System.currentTimeMillis()
+            wasTransmittingBeforePress = isTransmitting
+            if (hasPermission && isConnectedToServer && roomId.isNotEmpty()) {
+                uiScope.launch {
+                    if (!isTransmitting) {
+                        pttManager.onPTTPressed()
+                        isTransmitting = true
+                        currentSpeaker = "You"
+                        startTransmitting()
+                        signalingClient.requestSpeak(roomId, userId)
                     }
-                    true
-                } else {
-                    if (roomId.isEmpty()) showToast("Join a contact or channel first")
-                    false
                 }
+                true
+            } else {
+                if (roomId.isEmpty()) showToast("Join a contact or channel first")
+                false
             }
-            else -> super.onKeyDown(keyCode, event)
+        } else {
+            super.onKeyDown(keyCode, event)
         }
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
         Log.d("PTT", "Key up: $keyCode")
-        return when (keyCode) {
-            KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                val duration = System.currentTimeMillis() - volumeDownPressStart
-                val isLongPress = duration >= audioConfig.ptt.longPressThresholdMs
-                if (hasPermission && isConnectedToServer && roomId.isNotEmpty()) {
-                    uiScope.launch {
-                        val shouldStop = if (audioConfig.ptt.longPressLatch) {
-                            if (isLongPress) !wasTransmittingBeforePress else wasTransmittingBeforePress
-                        } else {
-                            true
-                        }
-                        if (shouldStop && isTransmitting) {
-                            pttManager.onPTTReleased()
-                            isTransmitting = false
-                            currentSpeaker = null
-                            stopTransmitting()
-                            signalingClient.stopSpeaking(roomId, userId)
-                        }
+        return if (isPttKey(keyCode, event)) {
+            val duration = System.currentTimeMillis() - volumeDownPressStart
+            val isLongPress = duration >= audioConfig.ptt.longPressThresholdMs
+            if (hasPermission && isConnectedToServer && roomId.isNotEmpty()) {
+                uiScope.launch {
+                    val shouldStop = if (audioConfig.ptt.longPressLatch) {
+                        if (isLongPress) !wasTransmittingBeforePress else wasTransmittingBeforePress
+                    } else {
+                        true
                     }
-                    true
-                } else {
-                    false
+                    if (shouldStop && isTransmitting) {
+                        pttManager.onPTTReleased()
+                        isTransmitting = false
+                        currentSpeaker = null
+                        stopTransmitting()
+                        signalingClient.stopSpeaking(roomId, userId)
+                    }
                 }
+                true
+            } else {
+                false
             }
-            else -> super.onKeyUp(keyCode, event)
+        } else {
+            super.onKeyUp(keyCode, event)
         }
+    }
+
+    private fun isPttKey(keyCode: Int, event: KeyEvent?): Boolean {
+        learnedPttKeyCode?.let { if (keyCode == it) return true }
+        val sc = event?.scanCode ?: -1
+        learnedPttScanCode?.let { if (sc == it) return true }
+        return (keyCode in pttKeyCodes) || (sc in pttScanCodes)
+    }
+
+    private fun loadPttMapping() {
+        val prefs = getSharedPreferences("pptapp", MODE_PRIVATE)
+        val kc = prefs.getInt("pttKeyCode", Int.MIN_VALUE)
+        val sc = prefs.getInt("pttScanCode", Int.MIN_VALUE)
+        learnedPttKeyCode = if (kc != Int.MIN_VALUE) kc else null
+        learnedPttScanCode = if (sc != Int.MIN_VALUE) sc else null
+        pttLearningEnabled = learnedPttKeyCode == null && learnedPttScanCode == null
+    }
+
+    private fun savePttMapping(keyCode: Int?, scanCode: Int?) {
+        val prefs = getSharedPreferences("pptapp", MODE_PRIVATE)
+        val ed = prefs.edit()
+        keyCode?.let { ed.putInt("pttKeyCode", it) }
+        scanCode?.let { ed.putInt("pttScanCode", it) }
+        ed.apply()
+    }
+
+    private fun maybeLearnPttKey(keyCode: Int, event: KeyEvent?) {
+        if (!pttLearningEnabled) return
+        if (!isLearningCandidate(keyCode)) return
+        val sc = event?.scanCode ?: -1
+        learnedPttKeyCode = keyCode
+        learnedPttScanCode = if (sc > 0) sc else null
+        pttLearningEnabled = false
+        savePttMapping(learnedPttKeyCode, learnedPttScanCode)
+        showToast("PTT key learned")
+    }
+
+    private fun isLearningCandidate(keyCode: Int): Boolean {
+        val excluded = setOf(
+            KeyEvent.KEYCODE_BACK,
+            KeyEvent.KEYCODE_MENU,
+            KeyEvent.KEYCODE_HOME,
+            KeyEvent.KEYCODE_POWER,
+            KeyEvent.KEYCODE_VOLUME_UP,
+            KeyEvent.KEYCODE_DPAD_UP,
+            KeyEvent.KEYCODE_DPAD_DOWN,
+            KeyEvent.KEYCODE_DPAD_LEFT,
+            KeyEvent.KEYCODE_DPAD_RIGHT,
+            KeyEvent.KEYCODE_ENTER,
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            KeyEvent.KEYCODE_SPACE
+        )
+        return keyCode !in excluded
     }
 
     override fun onDestroy() {
